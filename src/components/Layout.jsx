@@ -4,10 +4,13 @@ const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Dashboard',        icon: '⊞', adminOnly: false },
   { id: 'new-evaluation',  label: 'New Evaluation',   icon: '+',  adminOnly: false },
   { id: 'search',          label: 'Search',           icon: '⌕', adminOnly: false },
-  { id: 'customer-report', label: 'Customer Report',  icon: '⊙', adminOnly: false },
+  { id: 'at-risk',         label: 'At-Risk Clients',  icon: '⚠', adminOnly: false },
+  { id: 'account-audit',   label: 'Account Audit',    icon: '◎', adminOnly: false },
+  { id: 'ai-chat',         label: 'Ask CRIS',         icon: '✦', adminOnly: false },
+  { id: 'customer-report', label: 'Client Report',    icon: '⊙', adminOnly: false },
+  { id: 'monthly-report',  label: 'Monthly Report',   icon: '↑', adminOnly: false },
   { id: 'programs',        label: 'Programs',         icon: '⊟', adminOnly: false },
   { id: 'policies',        label: 'Policies',         icon: '⊠', adminOnly: false },
-  { id: 'monthly-report',  label: 'Monthly Report',   icon: '↑', adminOnly: false },
   { id: 'settings',        label: 'Settings',         icon: '⚙', adminOnly: true  },
 ];
 
@@ -30,7 +33,7 @@ export default function Layout({ page, setPage, onLogout, children, currentUser,
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">C</div>
             <div>
-              <div className="text-sm font-bold text-white">CRIS</div>
+              <div className="text-sm font-bold text-white">CRIS v2</div>
               <div className="text-xs text-slate-400">BA House Cleaning</div>
             </div>
           </div>
@@ -88,7 +91,7 @@ export default function Layout({ page, setPage, onLogout, children, currentUser,
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="font-semibold text-gray-800">CRIS</span>
+          <span className="font-semibold text-gray-800">CRIS v2</span>
         </header>
 
         {/* Page content */}
