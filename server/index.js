@@ -72,7 +72,15 @@ app.post('/api/login', async (req, res) => {
     return res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
+// Serve React frontend
+const path = require('path');
+app.use(express.static(path.join(__dirname, '../build')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../build', 'index.html'));
+});
 
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`CRIS server running on port ${PORT}`));
 app.use(requirePassword);
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -606,12 +614,4 @@ app.get('/api/monthly-report', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Serve React frontend
-const path = require('path');
-app.use(express.static(path.join(__dirname, '../build')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../build', 'index.html'));
-});
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`CRIS server running on port ${PORT}`));
