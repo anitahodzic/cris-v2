@@ -52,8 +52,7 @@ export default function App() {
       case 'customer-report': return <CustomerReport {...commonProps} />;
       case 'programs':        return <Programs />;
       case 'policies':        return <Policies />;
-      case 'settings':        return isAdmin ? <Settings currentUser={currentUser} /> : <Dashboard {...commonProps} />;
-      case 'monthly-report':  return <MonthlyReport />;
+      case 'settings':        return <Settings currentUser={currentUser} isAdmin={isAdmin} />;      case 'monthly-report':  return <MonthlyReport />;
       default:                return <Dashboard {...commonProps} />;
     }
   };
