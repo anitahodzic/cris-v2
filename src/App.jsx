@@ -10,14 +10,16 @@ import Programs from './pages/Programs';
 import Policies from './pages/Policies';
 import Settings from './pages/Settings';
 import MonthlyReport from './pages/MonthlyReport';
+import AiChat from './pages/AiChat';
+import AccountAudit from './pages/AccountAudit';
+import AtRiskClients from './pages/AtRiskClients';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
   const [activeEvalId, setActiveEvalId] = useState(null);
   const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null); // { username, role }
+  const [currentUser, setCurrentUser] = useState(null);
 
-  // Restore session on load
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem('cris_user');
@@ -28,6 +30,7 @@ export default function App() {
   }, []);
 
   const handleLogin = (user) => {
+    sessionStorage.setItem('cris_user', JSON.stringify(user));
     setCurrentUser(user);
   };
 
@@ -52,7 +55,11 @@ export default function App() {
       case 'customer-report': return <CustomerReport {...commonProps} />;
       case 'programs':        return <Programs />;
       case 'policies':        return <Policies />;
-      case 'settings':        return <Settings currentUser={currentUser} isAdmin={isAdmin} />;      case 'monthly-report':  return <MonthlyReport />;
+      case 'settings':        return <Settings currentUser={currentUser} isAdmin={isAdmin} />;
+      case 'monthly-report':  return <MonthlyReport />;
+      case 'ai-chat':         return <AiChat currentUser={currentUser} />;
+      case 'account-audit':   return <AccountAudit currentUser={currentUser} isAdmin={isAdmin} />;
+      case 'at-risk':         return <AtRiskClients currentUser={currentUser} isAdmin={isAdmin} />;
       default:                return <Dashboard {...commonProps} />;
     }
   };
