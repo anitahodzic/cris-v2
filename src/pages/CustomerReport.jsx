@@ -2,12 +2,85 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { Card, CardHeader, CardBody, Badge, Btn, Input, Spinner, Alert, SectionTitle, categoryColor, statusColor, ScoreBar } from '../components/UI';
 
+const BASE = process.env.REACT_APP_API_URL || '';
+
+async function lookupClient(name) {
+  if (!name || name.length < 2) return null;
+  try {
+    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(name)}`);
+    const data = await res.json();
+    // Return best match (first result whose name closely matches)
+    const lower = name.toLowerCase();
+    return data.find(d => d.name?.toLowerCase() === lower) || data[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function DriveCard({ info }) {
+  if (!info) return null;
+  const rows = [
+    ['Phone', info.phone],
+    ['Email', info.email],
+    ['Address', info.address],
+    ['Frequency', info.frequency],
+    ['Base Fee', info.base_fee ? `$${info.base_fee}/visit` : null],
+    ['Scope', info.scope],
+    ['Customer Since', info.customer_start],
+    ['Completed Jobs', info.completed_jobs],
+    ['Total Revenue', info.total_revenue ? `$${info.total_revenue}` : null],
+    ['Last Job', info.last_job],
+    ['Last Contact', info.last_contact],
+  ].filter(([, v]) => v);
+
+  const cancelRows = [
+    ['Cancelled', info.cancelled_date],
+    ['Cancel Reason', info.cancellation_reason],
+    ['Cancel Notes', info.cancellation_notes],
+    ['Avg Scorecard', info.avg_scorecard],
+  ].filter(([, v]) => v);
+
+  if (!rows.length) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <SectionTitle>MaidCentral Data</SectionTitle>
+        <div className="space-y-1.5 text-sm">
+          {rows.map(([label, val]) => (
+            <div key={label} className="flex gap-2">
+              <span className="text-gray-500 w-32 flex-shrink-0">{label}:</span>
+              <span className="text-gray-800 font-medium">{val}</span>
+            </div>
+          ))}
+        </div>
+        {cancelRows.length > 0 && (
+          <>
+            <div className="border-t border-gray-100 mt-3 pt-3">
+              <div className="text-xs font-semibold text-red-600 uppercase mb-2">Cancellation History</div>
+              <div className="space-y-1.5 text-sm">
+                {cancelRows.map(([label, val]) => (
+                  <div key={label} className="flex gap-2">
+                    <span className="text-gray-500 w-32 flex-shrink-0">{label}:</span>
+                    <span className="text-gray-800">{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEvalId }) {
   const [search, setSearch] = useState('');
   const [allEvals, setAllEvals] = useState([]);
   const [filtered, setFiltered] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [driveInfo, setDriveInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -31,9 +104,14 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
   const handleSelect = async (row) => {
     setSelected(row);
     setDetailLoading(true);
+    setDriveInfo(null);
     try {
-      const data = await api.getEvaluation(row.Evaluation_ID);
+      const [data, drive] = await Promise.all([
+        api.getEvaluation(row.Evaluation_ID),
+        lookupClient(row.Client_Name),
+      ]);
       setDetail(data);
+      setDriveInfo(drive);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -53,7 +131,7 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Customer Report</h1>
-        <p className="text-gray-500 mt-1">Search for a client to view their full evaluation history.</p>
+        <p className="text-gray-500 mt-1">Search for a client to view their full evaluation history and MaidCentral profile.</p>
       </div>
 
       {error && <Alert type="error" className="mb-4">{error}</Alert>}
@@ -113,6 +191,9 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
                   <Btn variant="primary" size="sm" onClick={handleViewFullReport}>View Full Report →</Btn>
                 )}
               </div>
+
+              {/* MaidCentral Drive data */}
+              <DriveCard info={driveInfo} />
 
               {/* Summary */}
               <Card>

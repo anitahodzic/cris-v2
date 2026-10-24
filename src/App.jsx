@@ -13,6 +13,7 @@ import MonthlyReport from './pages/MonthlyReport';
 import AiChat from './pages/AiChat';
 import AccountAudit from './pages/AccountAudit';
 import AtRiskClients from './pages/AtRiskClients';
+import TechnicianReport from './pages/TechnicianReport';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
@@ -60,6 +61,7 @@ export default function App() {
       case 'ai-chat':         return <AiChat currentUser={currentUser} />;
       case 'account-audit':   return <AccountAudit currentUser={currentUser} isAdmin={isAdmin} />;
       case 'at-risk':         return <AtRiskClients currentUser={currentUser} isAdmin={isAdmin} />;
+      case 'tech-report':     return <TechnicianReport />;
       default:                return <Dashboard {...commonProps} />;
     }
   };

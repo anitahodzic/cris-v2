@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { id: 'search',          label: 'Search',           icon: '⌕', adminOnly: false },
   { id: 'at-risk',         label: 'At-Risk Clients',  icon: '⚠', adminOnly: false },
   { id: 'account-audit',   label: 'Account Audit',    icon: '◎', adminOnly: false },
+  { id: 'tech-report',     label: 'Tech Report',       icon: '👷', adminOnly: false },
   { id: 'ai-chat',         label: 'Ask CRIS',         icon: '✦', adminOnly: false },
   { id: 'customer-report', label: 'Client Report',    icon: '⊙', adminOnly: false },
   { id: 'monthly-report',  label: 'Monthly Report',   icon: '↑', adminOnly: false },
