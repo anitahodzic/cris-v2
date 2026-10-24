@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { google } = require('googleapis');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -14,74 +15,6 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
-
-// ─── Password Protection ───────────────────────────────────────────────────
-// All /api routes require a valid password header or query param.
-// Set CRIS_PASSWORD in your .env file.
-const CRIS_PASSWORD = process.env.CRIS_PASSWORD;
-
-function requirePassword(req, res, next) {
-  // Skip health check so Render's health monitor works
-  if (req.path === '/api/health') return next();
-  // Skip login — handled separately with its own auth
-  if (req.path === '/api/login') return next();
-
-  if (!CRIS_PASSWORD) {
-    // No password set — warn in logs but allow through (dev mode)
-    console.warn('WARNING: CRIS_PASSWORD is not set. All requests are allowed.');
-    return next();
-  }
-
-  // Accept password from Authorization header: "Bearer yourpassword"
-  // or from x-cris-password header
-  const authHeader = req.headers['authorization'];
-  const headerPassword = req.headers['x-cris-password'];
-
-  const provided =
-    (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null) ||
-    headerPassword ||
-    null;
-
-  if (provided === CRIS_PASSWORD) return next();
-
-  return res.status(401).json({ error: 'Unauthorized. Invalid or missing password.' });
-}
-
-// ─── Login endpoint (public — no password required) ──────────────────────────
-app.post('/api/login', async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required.' });
-    }
-    const sheets = await getSheets();
-    const users = await readTab(sheets, 'Users');
-    const match = users.find(
-      u =>
-        u.Username?.trim().toLowerCase() === username.trim().toLowerCase() &&
-        u.Password?.trim() === password.trim()
-    );
-    if (!match) {
-      return res.status(401).json({ error: 'Invalid username or password.' });
-    }
-    const role = match.Role?.trim() || 'User';
-    console.log(`Login: ${match.Username} (${role})`);
-    return res.json({ username: match.Username.trim(), role });
-  } catch (err) {
-    console.error('Login error:', err.message);
-    return res.status(500).json({ error: 'Login failed. Please try again.' });
-  }
-});
-// Serve React frontend
-const path = require('path');
-app.use(express.static(path.join(__dirname, '../build')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../build', 'index.html'));
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`CRIS server running on port ${PORT}`));
-app.use(requirePassword);
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -140,6 +73,32 @@ function generateEvalId() {
 // Health check
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// ─── Login ────────────────────────────────────────────────────────────────
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required.' });
+    }
+    const sheets = await getSheets();
+    const users = await readTab(sheets, 'Users');
+    const match = users.find(
+      u =>
+        u.Username?.trim().toLowerCase() === username.trim().toLowerCase() &&
+        u.Password?.trim() === password.trim()
+    );
+    if (!match) {
+      return res.status(401).json({ error: 'Invalid username or password.' });
+    }
+    const role = match.Role?.trim() || 'User';
+    console.log(`Login: ${match.Username} (${role})`);
+    return res.json({ username: match.Username.trim(), role });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    return res.status(500).json({ error: 'Login failed. Please try again.' });
+  }
+});
+
 // Save intake
 app.post('/api/intake/save', async (req, res) => {
   try {
@@ -157,7 +116,6 @@ app.post('/api/intake/save', async (req, res) => {
       'Saved_Timestamp','AI_Analyzed'
     ];
 
-    // Check if row already exists
     const existing = await readTab(sheets, 'Client_Intake');
     const exists = existing.some(r => r.Evaluation_ID === data.evaluation_id);
     if (!exists) {
@@ -194,7 +152,6 @@ app.post('/api/analyze', async (req, res) => {
     const sheets = await getSheets();
     const intake = req.body;
 
-    // Read all reference data
     const [settings, programs, programRules, policies, strategies, strategyMap, frameworks] = await Promise.all([
       readTab(sheets, 'Settings'),
       readTab(sheets, 'Programs'),
@@ -211,7 +168,7 @@ app.post('/api/analyze', async (req, res) => {
 
     const systemPrompt = `You are CRIS — the Client Relationship Intelligence System for BA House Cleaning.
 
-Your job is to analyze a client cancellation case and return a structured JSON decision report. 
+Your job is to analyze a client cancellation case and return a structured JSON decision report.
 
 BUSINESS VALUES: WOW, Integrity, Respect, Accountability, Professionalism.
 
@@ -338,7 +295,6 @@ Analyze this case thoroughly and return your JSON decision report.`;
     analysis.evaluation_id = intake.evaluation_id;
     analysis.analysis_date = new Date().toISOString();
 
-    // Write to AI_Analysis
     const aiHeaders = [
       'Evaluation_ID','Client_Name','Analysis_Date','Save_Worthiness_Score','Client_Category',
       'Relationship_Score','Value_Score','Operational_Fit_Score','Policy_Alignment_Score',
@@ -388,14 +344,13 @@ Analyze this case thoroughly and return your JSON decision report.`;
       AI_Summary: analysis.ai_summary,
     }, aiHeaders);
 
-    // Mark intake as analyzed
     const intakeRows = await readTab(sheets, 'Client_Intake');
     const rowIndex = intakeRows.findIndex(r => r.Evaluation_ID === intake.evaluation_id);
     if (rowIndex >= 0) {
-      const sheetRow = rowIndex + 2; // +1 for header, +1 for 1-based
+      const sheetRow = rowIndex + 2;
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
-        range: `Client_Intake!Q${sheetRow}`, // AI_Analyzed column
+        range: `Client_Intake!Q${sheetRow}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [['Yes']] },
       });
@@ -458,7 +413,6 @@ app.get('/api/evaluations', async (req, res) => {
       outcome: outcomeMap[i.Evaluation_ID] || null,
     }));
 
-    // Filter
     const { client_name, evaluation_id, staff_name, status, outcome_filter, program, date_from, date_to } = req.query;
     let result = combined;
     if (client_name) result = result.filter(r => r.Client_Name?.toLowerCase().includes(client_name.toLowerCase()));
@@ -470,7 +424,7 @@ app.get('/api/evaluations', async (req, res) => {
     if (date_from) result = result.filter(r => r.Created_Date >= date_from);
     if (date_to) result = result.filter(r => r.Created_Date <= date_to);
 
-    res.json(result.reverse()); // newest first
+    res.json(result.reverse());
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -534,7 +488,7 @@ app.get('/api/dashboard', async (req, res) => {
   }
 });
 
-// Reference data endpoints
+// Reference data
 app.get('/api/programs', async (req, res) => {
   try {
     const sheets = await getSheets();
@@ -614,4 +568,180 @@ app.get('/api/monthly-report', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Serve React frontend (MUST be last, after all API routes) ────────────
+app.use(express.static(path.join(__dirname, '../build')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../build', 'index.html'));
+});
 
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`CRIS v2 running on port ${PORT}`));
+
+// ─── NEW v2 ROUTES ────────────────────────────────────────────────────────
+
+// AI Chat
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages = [], username } = req.body || {};
+    const sheets = await getSheets();
+    const [settings, programs, policies] = await Promise.all([
+      readTab(sheets, 'Settings'),
+      readTab(sheets, 'Programs'),
+      readTab(sheets, 'Policies'),
+    ]);
+    const settingsObj = settings.reduce((o, s) => { o[s.Setting_Key] = s.Value; return o; }, {});
+
+    const systemPrompt = `You are CRIS, the Client Relationship Intelligence System for BA House Cleaning — a Diamond Certified, woman-owned residential cleaning company in the East Bay of California.
+
+You help the team (${username || 'staff'}) understand retention strategy, client situations, and how to handle cancellations.
+
+COMPANY SETTINGS: ${JSON.stringify(settingsObj)}
+ACTIVE PROGRAMS: ${JSON.stringify(programs.filter(p => p.Active === 'Yes' || p.Active === 'TRUE'))}
+ACTIVE POLICIES: ${JSON.stringify(policies.filter(p => p.Active === 'Yes' || p.Active === 'TRUE'))}
+
+Be concise, practical, and empathetic. You know the business inside and out.`;
+
+    const reply = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: messages.filter(m => m.role !== 'system').slice(-10),
+    });
+
+    res.json({ reply: reply.content[0].text });
+  } catch (err) {
+    console.error('Chat error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Account Audit — all evaluations with outcomes joined
+app.get('/api/account-audit', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, analyses, outcomes] = await Promise.all([
+      readTab(sheets, 'Client_Intake'),
+      readTab(sheets, 'AI_Analysis'),
+      readTab(sheets, 'Outcomes'),
+    ]);
+
+    const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
+    const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
+
+    const evaluations = intakes.map(i => ({
+      ...i,
+      analysis: analysisMap[i.Evaluation_ID] || null,
+      outcome: outcomeMap[i.Evaluation_ID] || null,
+    })).reverse();
+
+    const saved = outcomes.filter(o => o.Outcome === 'Saved').length;
+    const cancelled = outcomes.filter(o => o.Outcome === 'Cancelled').length;
+    const no_outcome = intakes.filter(i => !outcomeMap[i.Evaluation_ID]).length;
+
+    res.json({
+      evaluations,
+      summary: { total: intakes.length, saved, cancelled, no_outcome },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// At-Risk — evaluations with AI analysis but no recorded outcome
+app.get('/api/at-risk', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, analyses, outcomes] = await Promise.all([
+      readTab(sheets, 'Client_Intake'),
+      readTab(sheets, 'AI_Analysis'),
+      readTab(sheets, 'Outcomes'),
+    ]);
+
+    const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
+    const outcomeSet = new Set(outcomes.map(o => o.Evaluation_ID));
+
+    const atRisk = intakes
+      .filter(i => !outcomeSet.has(i.Evaluation_ID))
+      .map(i => {
+        const analysis = analysisMap[i.Evaluation_ID];
+        return {
+          evaluation_id: i.Evaluation_ID,
+          client_name: i.Client_Name,
+          staff_name: i.Staff_Name,
+          date: i.Created_Date,
+          cancellation_reason: i.Cancellation_Reason,
+          score: analysis?.Save_Worthiness_Score ?? null,
+          recommended_strategy: analysis?.Recommended_Strategy || null,
+          recommended_program: analysis?.Recommended_Program || null,
+          risk_level: analysis?.Risk_Level || null,
+        };
+      })
+      .sort((a, b) => Number(a.score || 50) - Number(b.score || 50));
+
+    res.json(atRisk);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Settings write-back
+app.post('/api/settings/save', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const { rows } = req.body;
+    const headers = Object.keys(rows[0] || {});
+    const values = [headers, ...rows.map(r => headers.map(h => r[h] ?? ''))];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: 'Settings',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Programs write-back
+app.post('/api/programs/save', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const { rows } = req.body;
+    const headers = Object.keys(rows[0] || {});
+    const values = [headers, ...rows.map(r => headers.map(h => r[h] ?? ''))];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: 'Programs',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Policies write-back
+app.post('/api/policies/save', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const { rows } = req.body;
+    const headers = Object.keys(rows[0] || {});
+    const values = [headers, ...rows.map(r => headers.map(h => r[h] ?? ''))];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: 'Policies',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
