@@ -100,6 +100,19 @@ function generateEvalId() {
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// Debug: list all sheet tab names
+app.get('/api/debug/sheets', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties.title' });
+    const tabs = meta.data.sheets.map(s => s.properties.title);
+    // Also count rows in Client_Intake
+    let intakeCount = 0;
+    try { const rows = await readTab(sheets, 'Client_Intake'); intakeCount = rows.length; } catch {}
+    res.json({ tabs, intakeCount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body || {};
