@@ -23,6 +23,17 @@ function getAuth(scopes) {
   return new google.auth.JWT(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL, null, privateKey, scopes || ['https://www.googleapis.com/auth/spreadsheets']);
 }
 
+// OAuth2 auth using cs@bahouse refresh token (for Drive access)
+function getOAuth2Client() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret, 'urn:ietf:wg:oauth:2.0:oob');
+  oauth2.setCredentials({ refresh_token: refreshToken });
+  return oauth2;
+}
+
 async function getSheets() {
   const auth = getAuth(['https://www.googleapis.com/auth/spreadsheets']);
   await auth.authorize();
@@ -30,6 +41,13 @@ async function getSheets() {
 }
 
 async function getDrive() {
+  // Prefer OAuth2 (cs@bahouse owns the folders) over service account
+  const oauth2 = getOAuth2Client();
+  if (oauth2) {
+    console.log('getDrive: using OAuth2 (cs@bahouse)');
+    return google.drive({ version: 'v3', auth: oauth2 });
+  }
+  console.log('getDrive: using service account (no OAuth2 creds found)');
   const auth = getAuth(['https://www.googleapis.com/auth/drive.readonly']);
   await auth.authorize();
   return google.drive({ version: 'v3', auth });
