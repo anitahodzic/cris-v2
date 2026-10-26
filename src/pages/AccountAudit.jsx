@@ -1,246 +1,324 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
-function Badge({ label, color }) {
-  const colors = {
-    green: 'bg-green-100 text-green-700',
-    red: 'bg-red-100 text-red-700',
-    yellow: 'bg-yellow-100 text-yellow-700',
-    gray: 'bg-gray-100 text-gray-600',
-    blue: 'bg-blue-100 text-blue-700',
+async function lookupClient(name) {
+  if (!name || name.length < 2) return [];
+  try {
+    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(name)}`);
+    return await res.json();
+  } catch { return []; }
+}
+
+function StatusBadge({ status, reason }) {
+  const map = {
+    'On Track':        { bg: '#f0fdf4', border: '#86efac', text: '#15803d', icon: '✓' },
+    'Needs Attention': { bg: '#fefce8', border: '#fde047', text: '#854d0e', icon: '⚠' },
+    'Urgent':          { bg: '#fef2f2', border: '#fca5a5', text: '#b91c1c', icon: '!' },
   };
+  const s = map[status] || map['Needs Attention'];
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${colors[color] || colors.gray}`}>
-      {label}
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '6px 12px', borderRadius: 8,
+      background: s.bg, border: `1px solid ${s.border}`, color: s.text,
+      fontSize: 13, fontWeight: 600,
+    }}>
+      <span style={{
+        width: 18, height: 18, borderRadius: '50%', background: s.text, color: '#fff',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 10, fontWeight: 700, flexShrink: 0,
+      }}>{s.icon}</span>
+      {status}
+      {reason && <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.75 }}>— {reason}</span>}
     </span>
   );
 }
 
-function ClientDetail({ drive }) {
-  if (!drive) return null;
+function SignalCard({ type, headline, detail }) {
+  const borders = { time: '#06b6d4', quality: '#8b5cf6', feedback: '#14b8a6', tech: '#f59e0b' };
+  const labels  = { time: 'Time', quality: 'Quality', feedback: 'Client Feedback', tech: 'Technician' };
+  const colors  = { time: '#0891b2', quality: '#7c3aed', feedback: '#0d9488', tech: '#d97706' };
   return (
-    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-400">
-      {drive.phone && <span>📞 {drive.phone}</span>}
-      {drive.email && <span>✉ {drive.email}</span>}
-      {drive.address && <span>📍 {drive.address}</span>}
-      {drive.frequency && <span>🔄 {drive.frequency}</span>}
-      {drive.base_fee && <span>💰 {drive.base_fee}/visit</span>}
-      {drive.completed_jobs && <span>✅ {drive.completed_jobs} jobs</span>}
-      {drive.customer_start && <span>📅 Since {drive.customer_start}</span>}
+    <div style={{
+      background: 'var(--card-bg)', border: '1px solid var(--border)',
+      borderLeft: `4px solid ${borders[type]}`, borderRadius: 8,
+      padding: '12px 14px',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: colors[type], marginBottom: 6 }}>
+        {labels[type]}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg)', lineHeight: 1.3, marginBottom: headline && detail ? 4 : 0 }}>
+        {headline}
+      </div>
+      {detail && <div style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{detail}</div>}
     </div>
   );
 }
 
-export default function AccountAudit({ currentUser }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState(null);
-  const [view, setView] = useState('table'); // 'table' | 'cards'
+function Pill({ label, value }) {
+  if (!value) return null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      background: 'var(--pill-bg)', border: '1px solid var(--border)',
+      borderRadius: 20, padding: '2px 10px', fontSize: 12, color: 'var(--fg-muted)',
+    }}>
+      {label && <span style={{ opacity: 0.6 }}>{label}</span>}
+      <strong style={{ color: 'var(--fg)', fontWeight: 600 }}>{value}</strong>
+    </span>
+  );
+}
 
-  useEffect(() => {
-    fetch(`${BASE}/api/account-audit-enriched`)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
-  }, []);
+export default function AccountAudit() {
+  const [query, setQuery]       = useState('');
+  const [suggs, setSuggs]       = useState([]);
+  const [showSugg, setShowSugg] = useState(false);
+  const [driveData, setDriveData] = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [result, setResult]     = useState(null);
+  const timer = useRef(null);
 
-  if (loading) return <div className="p-8 text-center text-gray-400">Loading audit data…</div>;
-  if (error) return <div className="p-8 text-center text-red-500">{error}</div>;
+  const handleChange = (val) => {
+    setQuery(val);
+    setResult(null);
+    setDriveData(null);
+    setError('');
+    clearTimeout(timer.current);
+    if (val.trim().length < 2) { setSuggs([]); setShowSugg(false); return; }
+    timer.current = setTimeout(async () => {
+      const r = await lookupClient(val.trim());
+      setSuggs(r);
+      setShowSugg(r.length > 0);
+    }, 350);
+  };
 
-  const { evaluations = [], summary = {}, drive_date } = data || {};
+  const pick = (c) => {
+    setQuery(c.name);
+    setDriveData(c);
+    setSuggs([]);
+    setShowSugg(false);
+  };
 
-  const filtered = evaluations.filter(e => {
-    if (search && !(e.Client_Name || '').toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter === 'no-outcome') return !e.outcome;
-    if (filter === 'saved') return e.outcome?.Outcome === 'Saved';
-    if (filter === 'cancelled') return e.outcome?.Outcome === 'Cancelled';
-    if (filter === 'pending') return !e.outcome && e.analysis;
-    return true;
-  });
+  const runAudit = async () => {
+    if (!query.trim()) return;
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await fetch(`${BASE}/api/account-audit/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Audit failed');
+      setResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKey = (e) => {
+    if (e.key === 'Enter') { setShowSugg(false); runAudit(); }
+    if (e.key === 'Escape') setShowSugg(false);
+  };
+
+  const { audit, profile, cancellation, client_name } = result || {};
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Account Audit</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Full history of all evaluations and outcomes
-            {drive_date && <span className="ml-2 text-xs text-gray-400">· MC data as of {new Date(drive_date).toLocaleDateString()}</span>}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setView('table')} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${view==='table' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Table</button>
-          <button onClick={() => setView('cards')} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${view==='cards' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Cards</button>
-        </div>
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 16px' }}>
+      <style>{`
+        :root { --card-bg: #ffffff; --border: #e5e7eb; --fg: #111827; --fg-muted: #6b7280; --pill-bg: #f3f4f6; --sugg-hover: #eff6ff; }
+        @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+          --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151; --sugg-hover: #1e3a5f;
+        }}
+        :root[data-theme="dark"] { --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151; --sugg-hover: #1e3a5f; }
+        .audit-btn:hover:not(:disabled) { background: #1d4ed8 !important; }
+        .sugg-row:hover { background: var(--sugg-hover); }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+        .skeleton { animation: pulse 1.5s ease-in-out infinite; background: var(--pill-bg); border-radius: 6px; }
+      `}</style>
+
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--fg)', margin: 0 }}>Customer Account Audit</h1>
+        <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 4, marginBottom: 0 }}>
+          AI-powered account review from MaidCentral data — time, quality, and service signals in seconds.
+        </p>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {[
-          { label: 'Total Evaluations', value: summary.total || 0 },
-          { label: 'Saved', value: summary.saved || 0 },
-          { label: 'Cancelled', value: summary.cancelled || 0 },
-          { label: 'No Outcome', value: summary.no_outcome || 0 },
-        ].map(card => (
-          <div key={card.label} className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-2xl font-bold text-gray-900">{card.value}</div>
-            <div className="text-sm text-gray-500 mt-0.5">{card.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filter + Search */}
-      <div className="flex flex-wrap gap-3 mb-4 items-center">
-        <input
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
-          placeholder="Search client name…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        <div className="flex gap-2 flex-wrap">
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'saved', label: 'Saved' },
-            { id: 'cancelled', label: 'Cancelled' },
-            { id: 'pending', label: 'Pending Decision' },
-            { id: 'no-outcome', label: 'No Outcome' },
-          ].map(f => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                filter === f.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <p className="text-xs text-gray-400 mb-3">{filtered.length} record{filtered.length !== 1 ? 's' : ''}</p>
-
-      {view === 'table' ? (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Date</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Client</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Contact</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Staff</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Reason</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Score</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Rate</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Program</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Outcome</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Revenue Saved</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.length === 0 && (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">No records found</td></tr>
-                )}
-                {filtered.map((e, i) => (
-                  <tr key={i} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
-                      {e.Created_Date ? new Date(e.Created_Date).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-800">{e.Client_Name || '—'}</div>
-                      {e.drive?.frequency && <div className="text-xs text-gray-400">{e.drive.frequency}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
-                      {e.drive?.phone && <div>{e.drive.phone}</div>}
-                      {e.drive?.email && <div className="truncate max-w-[120px]">{e.drive.email}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{e.Staff_Name || '—'}</td>
-                    <td className="px-4 py-3 text-gray-600 max-w-[160px] truncate text-xs">{e.Cancellation_Reason || '—'}</td>
-                    <td className="px-4 py-3">
-                      {e.analysis?.Save_Worthiness_Score != null ? (
-                        <span className={`font-semibold ${
-                          Number(e.analysis.Save_Worthiness_Score) >= 70 ? 'text-green-600' :
-                          Number(e.analysis.Save_Worthiness_Score) >= 40 ? 'text-yellow-600' : 'text-red-500'
-                        }`}>
-                          {e.analysis.Save_Worthiness_Score}
-                        </span>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-600">
-                      {e.drive?.base_fee || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-xs">{e.outcome?.Program_Offered || e.analysis?.Recommended_Program || '—'}</td>
-                    <td className="px-4 py-3">
-                      {e.outcome?.Outcome ? (
-                        <Badge label={e.outcome.Outcome} color={e.outcome.Outcome === 'Saved' ? 'green' : e.outcome.Outcome === 'Cancelled' ? 'red' : 'gray'} />
-                      ) : e.analysis ? (
-                        <Badge label="Pending" color="yellow" />
-                      ) : (
-                        <Badge label="No Analysis" color="gray" />
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">
-                      {e.outcome?.Revenue_Saved ? `$${parseFloat(e.outcome.Revenue_Saved.replace(/[^0-9.]/g,'')||0).toLocaleString()}` : '—'}
-                    </td>
-                  </tr>
+      {/* Search row */}
+      <div style={{ marginBottom: 32 }}>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 6 }}>
+          Client Name
+        </label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <input
+              type="text"
+              value={query}
+              onChange={e => handleChange(e.target.value)}
+              onKeyDown={handleKey}
+              onBlur={() => setTimeout(() => setShowSugg(false), 150)}
+              placeholder="Type to search clients…"
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                border: '1px solid var(--border)', borderRadius: 8,
+                padding: '10px 12px', fontSize: 14,
+                background: 'var(--card-bg)', color: 'var(--fg)',
+                outline: 'none',
+              }}
+              autoComplete="off"
+            />
+            {showSugg && suggs.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4,
+                background: 'var(--card-bg)', border: '1px solid var(--border)',
+                borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                zIndex: 50, maxHeight: 200, overflowY: 'auto',
+              }}>
+                {suggs.map((s, i) => (
+                  <button key={i} className="sugg-row" onMouseDown={() => pick(s)} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    width: '100%', textAlign: 'left', padding: '9px 12px',
+                    border: 'none', background: 'none', cursor: 'pointer',
+                    borderBottom: i < suggs.length - 1 ? '1px solid var(--border)' : 'none',
+                    color: 'var(--fg)',
+                  }}>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                    <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+                      {s.frequency}{s.base_fee ? ` · $${s.base_fee}/visit` : ''}
+                    </span>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            )}
+          </div>
+          <button
+            className="audit-btn"
+            onClick={runAudit}
+            disabled={loading || !query.trim()}
+            style={{
+              padding: '10px 20px', borderRadius: 8, border: 'none',
+              background: '#2563eb', color: '#fff', fontSize: 13, fontWeight: 600,
+              cursor: loading || !query.trim() ? 'not-allowed' : 'pointer',
+              opacity: loading || !query.trim() ? 0.5 : 1,
+              whiteSpace: 'nowrap', transition: 'background 0.15s',
+            }}
+          >
+            {loading ? 'Running…' : '⊙ Run Audit'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 8, padding: '12px 16px', fontSize: 13, marginBottom: 20 }}>
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="skeleton" style={{ height: 28, width: 200 }} />
+          <div className="skeleton" style={{ height: 16, width: '100%' }} />
+          <div className="skeleton" style={{ height: 16, width: '80%' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+            {[1,2,3,4].map(i => <div key={i} className="skeleton" style={{ height: 80 }} />)}
           </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.length === 0 && (
-            <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400">No records found</div>
-          )}
-          {filtered.map((e, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-xl p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                    <span className="font-semibold text-gray-900">{e.Client_Name || '—'}</span>
-                    {e.outcome?.Outcome ? (
-                      <Badge label={e.outcome.Outcome} color={e.outcome.Outcome === 'Saved' ? 'green' : e.outcome.Outcome === 'Cancelled' ? 'red' : 'gray'} />
-                    ) : e.analysis ? (
-                      <Badge label="Pending" color="yellow" />
-                    ) : (
-                      <Badge label="No Analysis" color="gray" />
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-400 mb-1">
-                    {e.Created_Date ? new Date(e.Created_Date).toLocaleDateString() : ''} · {e.Staff_Name} · <span className="font-mono">{e.Evaluation_ID}</span>
-                  </div>
-                  <ClientDetail drive={e.drive} />
-                  {e.Cancellation_Reason && (
-                    <p className="text-sm text-gray-600 mt-2">{e.Cancellation_Reason}</p>
-                  )}
-                </div>
-                <div className="text-right flex-shrink-0">
-                  {e.analysis?.Save_Worthiness_Score != null && (
-                    <div className={`text-2xl font-bold ${Number(e.analysis.Save_Worthiness_Score) >= 70 ? 'text-green-600' : Number(e.analysis.Save_Worthiness_Score) >= 40 ? 'text-yellow-600' : 'text-red-500'}`}>
-                      {e.analysis.Save_Worthiness_Score}
-                    </div>
-                  )}
-                  {e.outcome?.Revenue_Saved && (
-                    <div className="text-sm font-semibold text-green-600 mt-1">
-                      ${parseFloat(e.outcome.Revenue_Saved.replace(/[^0-9.]/g,'')||0).toLocaleString()} saved
-                    </div>
-                  )}
-                </div>
+      )}
+
+      {result && audit && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* Client header */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fg)', margin: '0 0 8px' }}>{client_name}</h2>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {profile?.address && <Pill label="📍" value={profile.address} />}
+                {profile?.phone && <Pill label="📞" value={profile.phone} />}
+                {profile?.frequency && <Pill value={profile.frequency} />}
+                {profile?.base_fee && <Pill label="$" value={`${profile.base_fee}/visit`} />}
+                {profile?.customer_start && <Pill label="Since" value={profile.customer_start} />}
+                {profile?.completed_jobs && <Pill label="Jobs" value={profile.completed_jobs} />}
+                {profile?.total_revenue && <Pill label="Revenue" value={`$${Number(profile.total_revenue).toLocaleString()}`} />}
+                {profile?.avg_scorecard && <Pill label="Avg Score" value={profile.avg_scorecard} />}
+                {profile?.last_job && <Pill label="Last Job" value={profile.last_job} />}
               </div>
-              {(e.analysis?.Recommended_Program || e.outcome?.Program_Offered) && (
-                <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
-                  Program: <strong className="text-gray-700">{e.outcome?.Program_Offered || e.analysis?.Recommended_Program}</strong>
-                  {e.analysis?.Recommended_Strategy && <span className="ml-3">Strategy: <strong className="text-gray-700">{e.analysis.Recommended_Strategy}</strong></span>}
+              {cancellation && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626', fontWeight: 500 }}>
+                  ⚠ Previously cancelled{cancellation.date ? ` — ${cancellation.date}` : ''}
+                  {cancellation.reason ? ` · ${cancellation.reason}` : ''}
                 </div>
               )}
             </div>
-          ))}
+            <StatusBadge status={audit.status} reason={audit.status_reason} />
+          </div>
+
+          {/* Summary */}
+          <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '14px 16px' }}>
+            <p style={{ margin: 0, fontSize: 14, color: '#1e3a5f', lineHeight: 1.65 }}>{audit.summary}</p>
+            {audit.review_window && (
+              <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>{audit.review_window}</p>
+            )}
+          </div>
+
+          {/* Signal grid */}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 10 }}>Key Signals</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+              {['time','quality','feedback','tech'].map(type => {
+                const sig = audit.signals?.[type];
+                if (!sig) return null;
+                return <SignalCard key={type} type={type} headline={sig.headline} detail={sig.detail} />;
+              })}
+            </div>
+          </div>
+
+          {/* Recommendation + Next step */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+            {audit.recommendation && (
+              <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>Recommendation</div>
+                <p style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: 'var(--fg)', lineHeight: 1.4 }}>
+                  {audit.recommendation.action}
+                </p>
+                {audit.recommendation.why && (
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+                    <strong style={{ color: 'var(--fg)' }}>Why: </strong>{audit.recommendation.why}
+                    {audit.recommendation.evidence_count && (
+                      <span style={{ color: 'var(--fg-muted)', marginLeft: 4 }}>({audit.recommendation.evidence_count})</span>
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
+            {audit.next_step && (
+              <div style={{ background: 'var(--pill-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>Next Step</div>
+                <p style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--fg)', lineHeight: 1.4 }}>{audit.next_step.action}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {audit.next_step.owner && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Owner: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.owner}</strong></div>}
+                  {audit.next_step.due && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Due: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.due}</strong></div>}
+                  {audit.next_step.review_point && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Review: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.review_point}</strong></div>}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--fg-muted)', textAlign: 'center', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+            Audit generated from MaidCentral Drive export · Aggregate data only · Per-visit detail not available
+          </div>
+        </div>
+      )}
+
+      {!result && !loading && !error && (
+        <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--fg-muted)' }}>
+          <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>⊙</div>
+          <p style={{ fontWeight: 600, color: 'var(--fg)', margin: '0 0 4px' }}>Search for a client and run an audit</p>
+          <p style={{ fontSize: 13, margin: 0 }}>CRIS pulls MaidCentral data automatically — no copy-paste needed</p>
         </div>
       )}
     </div>
