@@ -1003,6 +1003,15 @@ function daysSince(dateStr) {
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// Build full name from a Drive CSV row — handles both combined "Customer Name" and split "First"/"Last" columns
+function custFullName(cust) {
+  if (cust['Customer Name'] && cust['Customer Name'].trim()) return cust['Customer Name'].trim();
+  if (cust['name'] && cust['name'].trim()) return cust['name'].trim();
+  const first = (cust['First'] || '').trim();
+  const last  = (cust['Last']  || '').trim();
+  return [first, last].filter(Boolean).join(' ');
+}
+
 function scoreClient(cust, scorecardRow, cancelledNames) {
   let score = 100;
   const signals = [];
@@ -1015,8 +1024,8 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
     else if (avg < 3.5) { score -= 8;  }
   }
 
-  // 2. Days since last job
-  const lastJob = cust['Last Job Date'] || cust['last_job'] || cust['Last Job'];
+  // 2. Days since last job — MaidCentral exports this as "Last Job"
+  const lastJob = cust['Last Job'] || cust['Last Job Date'] || cust['last_job'];
   const daysJob = daysSince(lastJob);
   if (daysJob !== null) {
     if (daysJob > 90)       { score -= 25; signals.push(`No job in ${daysJob} days`); }
@@ -1024,21 +1033,37 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
     else if (daysJob > 21)  { score -= 5;  }
   }
 
-  // 3. Days since last contact
-  const lastContact = cust['Last Contact Date'] || cust['last_contact'] || cust['Last Contact'];
+  // 3. Days since last contact — MaidCentral exports as "Last Contact"
+  const lastContact = cust['Last Contact'] || cust['Last Contact Date'] || cust['last_contact'];
   const daysContact = daysSince(lastContact);
   if (daysContact !== null) {
-    if (daysContact > 60)      { score -= 20; if (!signals.length || !signals[0].includes('contact')) signals.push(`No contact in ${daysContact} days`); }
+    if (daysContact > 60)      { score -= 20; signals.push(`No contact in ${daysContact} days`); }
     else if (daysContact > 30) { score -= 10; }
   }
 
-  // 4. Frequency — monthly clients are more at-risk than weekly
+  // 4. Frequency — monthly/every-4-weeks clients are more at-risk than weekly
   const freq = (cust['Frequency'] || cust['frequency'] || '').toLowerCase();
-  if (freq.includes('month') || freq.includes('one-time'))  { score -= 8; }
+  if (freq.includes('month') || freq.includes('one-time') || freq.includes('every 4')) { score -= 8; }
   else if (freq.includes('bi') || freq.includes('every 3')) { score -= 3; }
 
-  // 5. Previously cancelled (in cancelled CSV)
-  if (cancelledNames.has((cust['Customer Name'] || cust['name'] || '').trim().toLowerCase())) {
+  // 5. Revenue drop signal — Last 12 Revenue much lower than Total Revenue avg suggests declining service
+  const total12 = parseFloat((cust['Last 12 Revenue'] || '').toString().replace(/[^0-9.]/g, ''));
+  const completedJobs = parseInt(cust['Completed Jobs'] || '0', 10);
+  const baseFee = parseFloat((cust['Base Fee'] || '').toString().replace(/[^0-9.]/g, ''));
+  if (!isNaN(total12) && !isNaN(baseFee) && baseFee > 0 && completedJobs > 0) {
+    const expectedAnnual = baseFee * 26; // assume every-2-weeks baseline
+    if (total12 < expectedAnnual * 0.5) { score -= 10; signals.push('Revenue well below expected'); }
+  }
+
+  // 6. Pending jobs = 0 and last job was recent — may have paused or cancelled quietly
+  const pending = parseInt(cust['Pending Jobs'] || '0', 10);
+  if (!isNaN(pending) && pending === 0 && daysJob !== null && daysJob > 14) {
+    score -= 12;
+    if (!signals.find(s => s.includes('job'))) signals.push('No pending jobs scheduled');
+  }
+
+  // 7. Previously cancelled (in cancelled CSV)
+  if (cancelledNames.has(custFullName(cust).toLowerCase())) {
     score -= 15;
     signals.push('Previously cancelled');
   }
@@ -1102,35 +1127,35 @@ app.get('/api/risk-scan', async (req, res) => {
 
     // Build cancelled name set for quick lookup
     const cancelledNames = new Set(
-      cancelled.map(r => (r['Customer Name'] || r['name'] || '').trim().toLowerCase())
+      cancelled.map(r => custFullName(r).toLowerCase()).filter(Boolean)
     );
 
     // Build scorecard map: customer name → row
     const scorecardMap = {};
     for (const row of scorecards) {
-      const name = (row['Customer Name'] || row['name'] || '').trim().toLowerCase();
+      const name = custFullName(row).toLowerCase();
       if (name) scorecardMap[name] = row;
     }
 
     // Score every customer — exclude those already in the CRIS evaluation pipeline
     const clients = customers
       .filter(c => {
-        const name = (c['Customer Name'] || c['name'] || '').trim();
+        const name = custFullName(c);
         if (!name) return false;
-        // Exclude clients who already have an open/active CRIS evaluation (reactive pipeline)
-        if (openEvalNames.has(name.toLowerCase())) return false;
+        // Only exclude if there's a real name match against open evaluations
+        if (name.length > 0 && openEvalNames.has(name.toLowerCase())) return false;
         return true;
       })
       .map(cust => {
-        const name = (cust['Customer Name'] || cust['name'] || '').trim();
+        const name = custFullName(cust);
         const nameLow = name.toLowerCase();
         const scorecardRow = scorecardMap[nameLow] || null;
         const { score, tier, top_signal } = scoreClient(cust, scorecardRow, cancelledNames);
         return {
           name,
           frequency: cust['Frequency'] || cust['frequency'] || '',
-          last_job: cust['Last Job Date'] || cust['last_job'] || '',
-          last_contact: cust['Last Contact Date'] || cust['last_contact'] || '',
+          last_job: cust['Last Job'] || cust['Last Job Date'] || cust['last_job'] || '',
+          last_contact: cust['Last Contact'] || cust['Last Contact Date'] || cust['last_contact'] || '',
           avg_scorecard: scorecardRow ? (scorecardRow['avg_scorecard'] || scorecardRow['Avg Scorecard'] || null) : null,
           risk_score: score,
           risk_tier: tier,
