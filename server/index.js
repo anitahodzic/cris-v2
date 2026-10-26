@@ -96,6 +96,8 @@ async function getLatestDriveCSV(folderId) {
     orderBy: 'modifiedTime desc',
     pageSize: 1,
     fields: 'files(id,name,modifiedTime)',
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
   });
   const file = list.data.files?.[0];
   if (!file) {
@@ -103,7 +105,7 @@ async function getLatestDriveCSV(folderId) {
     return { rows: [], date: null, filename: null };
   }
   console.log(`getLatestDriveCSV: reading ${file.name} from folder ${folderId}`);
-  const res = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'text' });
+  const res = await drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'text' });
   const rows = parseCSV(res.data);
   console.log(`getLatestDriveCSV: parsed ${rows.length} rows from ${file.name}`);
   return { rows, date: file.modifiedTime, filename: file.name };
@@ -154,6 +156,9 @@ app.get('/api/debug/drive', async (req, res) => {
         orderBy: 'modifiedTime desc',
         pageSize: 20,
         fields: 'files(id,name,mimeType,modifiedTime,parents)',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+        corpora: 'allDrives',
       });
       results._wide_csv_search = (wide.data.files || []).map(f => ({ name: f.name, id: f.id, parents: f.parents }));
     } catch (e) {
@@ -167,6 +172,8 @@ app.get('/api/debug/drive', async (req, res) => {
           orderBy: 'modifiedTime desc',
           pageSize: 5,
           fields: 'files(id,name,mimeType,modifiedTime)',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
         });
         const files = list.data.files || [];
         const csvFile = files.find(f => f.mimeType === 'text/csv');
