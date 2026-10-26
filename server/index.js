@@ -14,9 +14,26 @@ app.use(express.json({ limit: '10mb' }));
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Drive folder IDs for MC report exports
-const DRIVE_FOLDER_CANCELLED = '1ldqOV3sO5yEJ9gjO3jIefdfeSwRI2DsW';
-const DRIVE_FOLDER_CUSTOMERS = '1tuYg8KTYYCW6ED1wV8s16tXfVdSi5PPe';
+// Drive folder IDs — all point to automated-reports subfolders inside BAHC MC Reports (scripts)
+// current-customers/automated-reports  (was showing wrong parent)
+const DRIVE_FOLDER_CUSTOMERS    = '1tuYg8KTYYCW6ED1wV8s16tXfVdSi5PPe'; // current-customers automated-reports
+// cancelled-service/automated-reports
+const DRIVE_FOLDER_CANCELLED    = '1ldqOV3sO5yEJ9gjO3jIefdfeSwRI2DsW'; // cancelled-service automated-reports
+
+// Additional report folders (for future use / other CRIS features)
+const DRIVE_FOLDER_AVAILABILITY_HOURS  = '1WXuFKhIl7Pa3Ok4cjG8rgaI2qOFCZb20';
+const DRIVE_FOLDER_CONTACT_TICKETS     = '1FKLze6cGeas1NTWfqBi3dU15caNLIM6U';
+const DRIVE_FOLDER_CONTACT_TICKETS_HIST= '1wOR6N9ML2pNkoJm0Vee3Fg2sIpvkF62H';
+const DRIVE_FOLDER_DISPATCH_BOARD      = '1LLvaTq5Ecfr8ZxI3wD56-g21Dj7fgeby';
+const DRIVE_FOLDER_DISPATCH_BOARD_HIST = '1J0HGjHsZQPBOSJlay7mN8ZJ8kzS8iXSd';
+const DRIVE_FOLDER_EFFICIENCY_MAP      = '1PWB6w_DmZwWvKcNlQMOySSRFBCIlzcgT';
+const DRIVE_FOLDER_EMPLOYEE_LIST       = '1h6ZHlxBzpN7L8iKzukfzmuG3UCP6En5x';
+const DRIVE_FOLDER_EMPLOYEE_STATS      = '1-TmXhQ0jCWnVVxyfq32F2p0shkUrgySL';
+const DRIVE_FOLDER_JOBSTATUS           = '1wyRb22hbuNG16Is8qqs6Evexe_Wu5Y-V';
+const DRIVE_FOLDER_JOBSTATUS_HIST      = '1e4yTfJOP4XL5wO8foWNAx48eY5kEK6uU';
+const DRIVE_FOLDER_PTO                 = '1cU-wNPWLlHlhsLrwNmynxojRGFvgwCFs';
+const DRIVE_FOLDER_SCORECARDS          = '1xWuY9y1lb19zAzIqi9bcSWx5p1wdjHUJ';
+const DRIVE_FOLDER_SCORECARDS_HIST     = '15sr5ToKyp2rTzvkvAPOlwvZJF8m8cMJA';
 
 function getAuth(scopes) {
   const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
