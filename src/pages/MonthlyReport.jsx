@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
-import { Spinner, Alert } from '../components/UI';
+import { Spinner, Alert, LoadingRing } from '../components/UI';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const YEARS = [2024, 2025, 2026, 2027];
@@ -90,7 +90,7 @@ export default function MonthlyReport() {
       {error && <Alert type="error" className="mb-4">{error}</Alert>}
 
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}><Spinner size="lg" /></div>
+        <LoadingRing label="Building monthly report…" />
       ) : !data ? null : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* KPI tiles */}

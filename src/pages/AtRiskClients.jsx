@@ -1,59 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LoadingRing } from '../components/UI';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
 const TIER_ORDER = { 'High': 0, 'Medium': 1, 'Low': 2, 'Very Low': 3 };
 
-function ScanProgress() {
-  const [pct, setPct] = useState(0);
-  const [label, setLabel] = useState('Connecting to Drive…');
-  const intervalRef = useRef(null);
-
-  useEffect(() => {
-    const steps = [
-      [600,  12, 'Loading active clients from Drive…'],
-      [1200, 28, 'Loading scorecard data…'],
-      [2000, 45, 'Loading cancelled client history…'],
-      [2800, 60, 'Checking evaluation pipeline…'],
-      [3600, 74, 'Scoring clients by risk signals…'],
-      [4400, 86, 'Ranking by risk level…'],
-      [5200, 94, 'Almost done…'],
-    ];
-    let i = 0;
-    intervalRef.current = setInterval(() => {
-      if (i < steps.length) {
-        const [, p, l] = steps[i++];
-        setPct(p);
-        setLabel(l);
-      }
-    }, 800);
-    return () => clearInterval(intervalRef.current);
-  }, []);
-
-  const r = 38;
-  const circ = 2 * Math.PI * r;
-  const dash = (pct / 100) * circ;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 20px', gap: 20 }}>
-      <div style={{ position: 'relative', width: 96, height: 96 }}>
-        <svg width={96} height={96} style={{ transform: 'rotate(-90deg)' }}>
-          <circle cx={48} cy={48} r={r} fill="none" stroke="#f1f5f9" strokeWidth={7} />
-          <circle cx={48} cy={48} r={r} fill="none" stroke="#2563eb" strokeWidth={7}
-            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-            style={{ transition: 'stroke-dasharray 0.7s ease' }} />
-        </svg>
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 800, color: '#1d4ed8' }}>
-          {pct}%
-        </div>
-      </div>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>Scanning client risk…</div>
-        <div style={{ fontSize: 13, color: '#64748b' }}>{label}</div>
-      </div>
-    </div>
-  );
-}
+const RISK_SCAN_STEPS = [
+  [600,  12, 'Loading active clients from Drive…'],
+  [1200, 28, 'Loading scorecard data…'],
+  [2000, 45, 'Loading cancelled client history…'],
+  [2800, 60, 'Checking evaluation pipeline…'],
+  [3600, 74, 'Scoring clients by risk signals…'],
+  [4400, 86, 'Ranking by risk level…'],
+  [5200, 94, 'Almost done…'],
+];
 const TIER_STYLE = {
   High:     { bg: '#fef2f2', color: '#dc2626', border: '#fecaca', dot: '#dc2626' },
   Medium:   { bg: '#fffbeb', color: '#d97706', border: '#fde68a', dot: '#d97706' },
@@ -286,7 +246,12 @@ export default function AtRiskClients({ currentUser }) {
     load(); // reload to get new data
   };
 
-  if (loading) return <ScanProgress />;
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>Scanning client risk…</div>
+      <LoadingRing steps={RISK_SCAN_STEPS} />
+    </div>
+  );
   if (error) return <div style={{ padding: 48, textAlign: 'center', color: '#dc2626' }}>{error}</div>;
 
   return (
@@ -392,9 +357,19 @@ export default function AtRiskClients({ currentUser }) {
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: '#64748b', marginBottom: 6 }}>
                       {client.frequency && <span>{client.frequency}</span>}
                       {client.last_job && <span>Last job: {client.last_job}</span>}
-                      {client.last_checkin && <span>Last contact: {client.last_checkin}</span>}
-                      {client.top_signal && <span style={{ color: '#d97706' }}>⚠ {client.top_signal}</span>}
+                      {client.pending_jobs !== undefined && <span style={{ color: client.pending_jobs === '0' || client.pending_jobs === 0 ? '#dc2626' : '#16a34a' }}>{client.pending_jobs === '0' || client.pending_jobs === 0 ? '⚠ No pending jobs' : `${client.pending_jobs} pending`}</span>}
+                      {client.last_checkin && <span>Last check-in: {client.last_checkin}</span>}
                     </div>
+                    {/* Risk signals */}
+                    {client.signals && client.signals.length > 0 && (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                        {client.signals.map((sig, i) => (
+                          <span key={i} style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 12, padding: '1px 8px', fontWeight: 600 }}>
+                            ⚠ {sig}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <ScoreBar score={client.risk_score} />
                   </div>
                   {/* Right: action */}

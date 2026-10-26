@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
-import { Spinner, Alert, Badge, categoryColor, statusColor } from '../components/UI';
+import { Spinner, Alert, Badge, categoryColor, statusColor, LoadingRing } from '../components/UI';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
@@ -180,7 +180,7 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
             <p style={{ fontSize: 14 }}>Select a client to view their report</p>
           </div>
         ) : detailLoading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}><Spinner size="lg" /></div>
+          <LoadingRing label="Loading client data…" />
         ) : detail ? (
           <div style={{ maxWidth: 700 }}>
             {/* Client header */}

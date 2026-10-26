@@ -143,6 +143,75 @@ export function Spinner({ size = 'md' }) {
   );
 }
 
+export function LoadingRing({ steps, label: staticLabel }) {
+  const { useState, useEffect } = React;
+  const defaultSteps = [
+    [600,  15, 'Connecting…'],
+    [1400, 35, 'Fetching data…'],
+    [2200, 55, 'Processing…'],
+    [3000, 72, 'Almost there…'],
+    [3800, 88, 'Finishing up…'],
+  ];
+  const activeSteps = steps || defaultSteps;
+  const [pct, setPct] = useState(0);
+  const [label, setLabel] = useState(staticLabel || activeSteps[0][2]);
+
+  useEffect(() => {
+    if (staticLabel) return; // static label mode — just animate pct
+    let i = 0;
+    const iv = setInterval(() => {
+      if (i < activeSteps.length) {
+        const [, p, l] = activeSteps[i++];
+        setPct(p);
+        setLabel(l);
+      }
+    }, 800);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    if (!staticLabel) return;
+    // In static label mode still animate pct slowly
+    let p = 0;
+    const iv = setInterval(() => {
+      p = Math.min(p + 2, 92);
+      setPct(p);
+      if (p >= 92) clearInterval(iv);
+    }, 120);
+    return () => clearInterval(iv);
+  }, [staticLabel]);
+
+  const r = 38;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', padding: '48px 0' }}>
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="#e2e8f0" strokeWidth="7" />
+        <circle
+          cx="50" cy="50" r={r} fill="none"
+          stroke="url(#ring-grad)" strokeWidth="7"
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circ}`}
+          strokeDashoffset={circ * 0.25}
+          style={{ transition: 'stroke-dasharray 0.6s ease' }}
+        />
+        <defs>
+          <linearGradient id="ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#3b82f6" />
+            <stop offset="100%" stopColor="#6366f1" />
+          </linearGradient>
+        </defs>
+        <text x="50" y="54" textAnchor="middle" fontSize="15" fontWeight="700" fill="#1e40af" fontFamily="system-ui,sans-serif">
+          {pct}%
+        </text>
+      </svg>
+      <p style={{ fontSize: '14px', color: '#64748b', margin: 0, fontWeight: 500 }}>{label}</p>
+    </div>
+  );
+}
+
 export function ScoreBar({ score, max = 100 }) {
   const pct = Math.min(100, Math.max(0, (score / max) * 100));
   const color = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';

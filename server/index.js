@@ -991,9 +991,26 @@ You MUST return ONLY valid JSON matching this exact schema, with no markdown fen
 const riskScanCache = { ts: 0, data: null };
 
 function parseDateField(str) {
-  if (!str) return null;
-  // handles MM/DD/YYYY, YYYY-MM-DD, and similar
-  const d = new Date(str);
+  if (!str || typeof str !== 'string') return null;
+  const s = str.trim();
+  if (!s) return null;
+
+  // M/D/YYYY or MM/DD/YYYY (MaidCentral export format)
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const d = new Date(parseInt(mdy[3]), parseInt(mdy[1]) - 1, parseInt(mdy[2]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // YYYY-MM-DD
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) {
+    const d = new Date(parseInt(ymd[1]), parseInt(ymd[2]) - 1, parseInt(ymd[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Fall back to native parse (handles ISO 8601, etc.)
+  const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
 
@@ -1078,7 +1095,7 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
   else if (score <= 80) tier = 'Low';
   else                  tier = 'Very Low';
 
-  return { score, tier, top_signal: signals[0] || null };
+  return { score, tier, top_signal: signals[0] || null, signals };
 }
 
 app.get('/api/risk-scan', async (req, res) => {
@@ -1150,16 +1167,20 @@ app.get('/api/risk-scan', async (req, res) => {
         const name = custFullName(cust);
         const nameLow = name.toLowerCase();
         const scorecardRow = scorecardMap[nameLow] || null;
-        const { score, tier, top_signal } = scoreClient(cust, scorecardRow, cancelledNames);
+        const { score, tier, top_signal, signals } = scoreClient(cust, scorecardRow, cancelledNames);
         return {
           name,
           frequency: cust['Frequency'] || cust['frequency'] || '',
           last_job: cust['Last Job'] || cust['Last Job Date'] || cust['last_job'] || '',
           last_contact: cust['Last Contact'] || cust['Last Contact Date'] || cust['last_contact'] || '',
+          pending_jobs: cust['Pending Jobs'] || '0',
+          base_fee: cust['Base Fee'] || '',
+          last_12_revenue: cust['Last 12 Revenue'] || '',
           avg_scorecard: scorecardRow ? (scorecardRow['avg_scorecard'] || scorecardRow['Avg Scorecard'] || null) : null,
           risk_score: score,
           risk_tier: tier,
           top_signal,
+          signals,  // all risk signals that fired, shown in UI
         };
       })
       .sort((a, b) => a.risk_score - b.risk_score);
