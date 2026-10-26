@@ -12,17 +12,20 @@ const CACHE_TTL = 5 * 60 * 1000;
 async function getDriveMap() {
   if (driveCache && Date.now() - driveCacheTime < CACHE_TTL) return driveCache;
   try {
-    const [curr, canc] = await Promise.all([
+    const [currRes, cancRes] = await Promise.all([
       fetch(`${BASE}/api/drive-customers`).then(r => r.json()),
       fetch(`${BASE}/api/drive-cancelled`).then(r => r.json()),
     ]);
+    // endpoints return { rows, date, filename }
+    const curr = currRes.rows || (Array.isArray(currRes) ? currRes : []);
+    const canc = cancRes.rows || (Array.isArray(cancRes) ? cancRes : []);
     const map = {};
-    for (const c of (curr || [])) {
-      const key = `${c.first || ''} ${c.last || ''}`.trim().toLowerCase();
+    for (const c of curr) {
+      const key = `${c.First || c.first || ''} ${c.Last || c.last || ''}`.trim().toLowerCase();
       if (key) map[key] = { ...c, _type: 'current' };
     }
-    for (const c of (canc || [])) {
-      const key = (c.customer || '').trim().toLowerCase();
+    for (const c of canc) {
+      const key = (c.Customer || c.customer || '').trim().toLowerCase();
       if (key) {
         map[key] = { ...(map[key] || {}), ...c, _type: map[key] ? 'both' : 'cancelled' };
       }
@@ -48,15 +51,22 @@ function matchDrive(map, name) {
 
 function DrivePills({ info }) {
   if (!info) return null;
+  // Support both raw CSV column names (from drive-customers) and normalized names (from client-lookup)
+  const phone = info['Cell Phone'] || info.phone;
+  const frequency = info.Frequency || info.frequency;
+  const baseFee = info['Base Fee'] || info.base_fee;
+  const scope = info['Scope of Work'] || info.scope;
+  const jobs = info['Completed Jobs'] || info.completed_jobs;
+
   const pills = [
-    info.phone && { label: info.phone, color: 'text-gray-600' },
-    info.frequency && { label: info.frequency, color: 'text-blue-600' },
-    (info.base_fee || info['base fee']) && { label: `$${info.base_fee || info['base fee']}/visit`, color: 'text-green-700' },
-    info.scope && { label: info.scope.length > 20 ? info.scope.slice(0, 20) + '…' : info.scope, color: 'text-gray-500' },
-    info.completed_jobs && { label: `${info.completed_jobs} jobs`, color: 'text-gray-500' },
+    phone && { label: phone, color: 'text-gray-600' },
+    frequency && { label: frequency, color: 'text-blue-600' },
+    baseFee && { label: `$${baseFee}/visit`, color: 'text-green-700' },
+    scope && { label: scope.length > 20 ? scope.slice(0, 20) + '…' : scope, color: 'text-gray-500' },
+    jobs && { label: `${jobs} jobs`, color: 'text-gray-500' },
   ].filter(Boolean);
 
-  const wasCancelled = info._type === 'cancelled' || info._type === 'both' || info['date of cancellation'];
+  const wasCancelled = info._type === 'cancelled' || info._type === 'both' || info['Date of Cancellation'] || info['date of cancellation'];
 
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
