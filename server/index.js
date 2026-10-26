@@ -142,7 +142,73 @@ app.post('/api/analyze', async (req, res) => {
 
     const systemPrompt = `You are CRIS — the Client Relationship Intelligence System for BA House Cleaning.\n\nYour job is to analyze a client cancellation case and return a structured JSON decision report.\n\nBUSINESS VALUES: WOW, Integrity, Respect, Accountability, Professionalism.\n\nIMPORTANT PHILOSOPHY:\n- NOT every client should be saved. Poor-fit clients hurt the team and the business.\n- Consider profitability, technician impact, client behavior, and long-term fit.\n- Recommend Respectful Cancellation when client fit is genuinely poor.\n- Do NOT over-recommend discounts.\n- Do NOT recommend Hardship unless hardship is clearly evident.\n- Do NOT recommend Flex unless scheduling flexibility is realistic.\n- Do NOT recommend Essentials unless reduced scope makes sense.\n- Be practical, specific, and direct.\n\nCOMPANY SETTINGS:\n${JSON.stringify(settingsObj, null, 2)}\n\nACTIVE PROGRAMS:\n${JSON.stringify(activePrograms, null, 2)}\n\nPROGRAM RULES:\n${JSON.stringify(programRules, null, 2)}\n\nACTIVE POLICIES:\n${JSON.stringify(activePolicies, null, 2)}\n\nRETENTION STRATEGIES:\n${JSON.stringify(strategies, null, 2)}\n\nSTRATEGY-PROGRAM MAP:\n${JSON.stringify(strategyMap, null, 2)}\n\nCONVERSATION FRAMEWORKS:\n${JSON.stringify(frameworks, null, 2)}\n\nReturn ONLY valid JSON matching this exact schema — no markdown, no explanation:\n{"evaluation_id":"","save_worthiness_score":0,"client_category":"","relationship_score":0,"value_score":0,"operational_fit_score":0,"policy_alignment_score":0,"risk_level":"","primary_cancellation_driver":"","root_cause_evidence":"","recommended_strategy":"","recommended_program":"","backup_program":"","programs_not_recommended":"","programs_not_recommended_reason":"","management_review_required":"","technician_feedback_needed":"","technician_names":"","quality_issue_summary":"","base_hours":"","allowed_hours":"","average_actual_hours":"","hours_difference":"","time_efficiency_analysis":"","revenue_at_risk":"","save_confidence_percent":0,"conversation_objective":"","key_talking_points":"","questions_to_ask":"","what_not_to_say":"","suggested_phone_script":"","follow_up_recommendation":"","ai_summary":""}`;
 
-    const userPrompt = `CLIENT CANCELLATION CASE:\n\nEvaluation ID: ${intake.evaluation_id}\nClient Name: ${intake.client_name}\nCustomer ID: ${intake.customer_id}\nStaff Member: ${intake.staff_name}\nContact Method: ${intake.contact_method}\nDate: ${intake.created_date}\n\nCANCELLATION REASON (exact words):\n${intake.cancellation_reason}\n\nCUSTOMER OVERVIEW FROM MAID CENTRAL:\n${intake.customer_overview_paste}\n\nSCORECARDS:\n${intake.scorecards_paste}\n\nTECHNICIAN HISTORY:\n${intake.technician_history_paste}\n\nSERVICE SET INFORMATION:\n${intake.service_set_paste}\n\nTECHNICIAN PREFERENCES:\n${intake.technician_preferences_paste}\n\nINTERNAL NOTES:\n${intake.internal_notes_paste}\n\nRELEVANT SMS/EMAIL:\n${intake.relevant_sms_email_paste}\n\nAnalyze this case thoroughly and return your JSON decision report.`;
+    // Server-side Drive lookup — build context from CSV data, no copy-paste needed
+    let driveContext = '';
+    try {
+      const driveData = intake.drive_data; // passed from frontend if already looked up
+      let curr = null, canc = null;
+      if (driveData) {
+        // Frontend already did the lookup — use it
+        curr = driveData._type !== 'cancelled' ? driveData : null;
+        canc = (driveData._type === 'cancelled' || driveData._type === 'both') ? driveData : null;
+      } else {
+        // Server-side fallback: search Drive CSVs by client name
+        const [currData, cancData] = await Promise.all([
+          cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+          cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
+        ]);
+        const currList = currData.rows || [];
+        const cancList = cancData.rows || [];
+        const lower = (intake.client_name || '').trim().toLowerCase();
+        curr = currList.find(r => {
+          const n = `${r.First || ''} ${r.Last || ''}`.trim().toLowerCase();
+          return n === lower || n.includes(lower) || lower.includes(n);
+        }) || null;
+        canc = cancList.find(r => {
+          const n = (r.Customer || '').trim().toLowerCase();
+          return n === lower || n.includes(lower) || lower.includes(n);
+        }) || null;
+      }
+
+      const lines = [];
+      if (curr) {
+        lines.push('MAIDCENTRAL PROFILE (from current customers export):');
+        if (curr.phone || curr['Phone']) lines.push(`  Phone: ${curr.phone || curr['Phone']}`);
+        if (curr.email || curr['Email']) lines.push(`  Email: ${curr.email || curr['Email']}`);
+        const addr = [curr['Address 1'] || curr.address, curr['City'] || curr.city, curr['State'] || curr.state].filter(Boolean).join(', ');
+        if (addr) lines.push(`  Address: ${addr}`);
+        if (curr.frequency || curr['Frequency']) lines.push(`  Frequency: ${curr.frequency || curr['Frequency']}`);
+        if (curr.base_fee || curr['Base Fee']) lines.push(`  Base Fee: $${curr.base_fee || curr['Base Fee']}/visit`);
+        if (curr.scope || curr['Scope of Work']) lines.push(`  Scope: ${curr.scope || curr['Scope of Work']}`);
+        if (curr.customer_start || curr['Customer Start']) lines.push(`  Customer Since: ${curr.customer_start || curr['Customer Start']}`);
+        if (curr.completed_jobs || curr['Completed Jobs']) lines.push(`  Completed Jobs: ${curr.completed_jobs || curr['Completed Jobs']}`);
+        if (curr.total_revenue || curr['Total Revenue']) lines.push(`  Total Revenue: $${curr.total_revenue || curr['Total Revenue']}`);
+        if (curr.last_12_revenue || curr['Last 12 Revenue']) lines.push(`  Last 12 Mo Revenue: $${curr.last_12_revenue || curr['Last 12 Revenue']}`);
+        if (curr.last_job || curr['Last Job']) lines.push(`  Last Job: ${curr.last_job || curr['Last Job']}`);
+        if (curr.pending_jobs || curr['Pending Jobs']) lines.push(`  Pending Jobs: ${curr.pending_jobs || curr['Pending Jobs']}`);
+        if (curr.last_contact || curr['Last Contact']) lines.push(`  Last Contact: ${curr.last_contact || curr['Last Contact']}`);
+      }
+      if (canc) {
+        lines.push('');
+        lines.push('CANCELLATION HISTORY (from cancelled-service export):');
+        if (canc['Date of Cancellation'] || canc.cancellation_date) lines.push(`  Date Cancelled: ${canc['Date of Cancellation'] || canc.cancellation_date}`);
+        if (canc['Reason'] || canc.reason) lines.push(`  Prior Cancel Reason: ${canc['Reason'] || canc.reason}`);
+        if (canc['Avg. Scorecard'] || canc.avg_scorecard) lines.push(`  Avg Scorecard: ${canc['Avg. Scorecard'] || canc.avg_scorecard}`);
+        if (canc['Last Scorecard'] || canc.last_scorecard) lines.push(`  Last Scorecard: ${canc['Last Scorecard'] || canc.last_scorecard}`);
+        if (canc['Cancelled within 60'] || canc.cancelled_within_60) lines.push(`  Cancelled Within 60 Days: ${canc['Cancelled within 60'] || canc.cancelled_within_60}`);
+        if (canc['Default Team(s)'] || canc.default_teams) lines.push(`  Default Team: ${canc['Default Team(s)'] || canc.default_teams}`);
+        if (canc['Notes'] || canc.cancellation_notes) lines.push(`  Notes: ${canc['Notes'] || canc.cancellation_notes}`);
+      }
+      if (!curr && !canc) {
+        lines.push('MAIDCENTRAL PROFILE: Not found in Drive export (name may not match exactly).');
+      }
+      driveContext = lines.join('\n');
+    } catch (driveErr) {
+      console.warn('Drive lookup failed during analyze:', driveErr.message);
+      driveContext = 'MAIDCENTRAL PROFILE: Drive lookup unavailable.';
+    }
+
+    const userPrompt = `CLIENT CANCELLATION CASE:\n\nEvaluation ID: ${intake.evaluation_id}\nClient Name: ${intake.client_name}\nCustomer ID: ${intake.customer_id || 'N/A'}\nStaff Member: ${intake.staff_name}\nContact Method: ${intake.contact_method}\nDate: ${intake.created_date}\n\nCANCELLATION REASON (exact words from client):\n${intake.cancellation_reason}\n\n${driveContext}\n\nAnalyze this case thoroughly and return your JSON decision report.`;
 
     const message = await anthropic.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] });
     const rawText = message.content[0].text;

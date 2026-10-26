@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { api } from '../utils/api';
 import { Card, CardHeader, CardBody, Btn, TextArea, Input, Select, Alert, Spinner } from '../components/UI';
 
@@ -11,14 +11,7 @@ const EMPTY = {
   customer_id: '',
   contact_method: 'Phone',
   current_status: 'New',
-  customer_overview_paste: '',
   cancellation_reason: '',
-  scorecards_paste: '',
-  technician_history_paste: '',
-  service_set_paste: '',
-  technician_preferences_paste: '',
-  internal_notes_paste: '',
-  relevant_sms_email_paste: '',
 };
 
 async function lookupClient(name) {
@@ -33,41 +26,56 @@ async function lookupClient(name) {
   }
 }
 
-function DriveAutofillBanner({ info, onDismiss }) {
+function DriveProfileCard({ info, loading }) {
+  if (loading) return (
+    <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 flex items-center gap-2 text-sm text-blue-400">
+      <Spinner size="sm" /> Looking up MaidCentral profile…
+    </div>
+  );
   if (!info) return null;
+
   const fields = [
-    info.phone && `📞 ${info.phone}`,
-    info.email && `✉ ${info.email}`,
-    info.frequency && `🔁 ${info.frequency}`,
-    info.base_fee && `💵 $${info.base_fee}/visit`,
-    info.scope && `🧹 ${info.scope}`,
-    info.customer_start && `📅 Since ${info.customer_start}`,
-    info.completed_jobs && `✓ ${info.completed_jobs} jobs`,
-    info.total_revenue && `$ ${info.total_revenue} total rev`,
-  ].filter(Boolean);
+    ['Phone', info.phone],
+    ['Email', info.email],
+    ['Address', info.address],
+    ['Frequency', info.frequency],
+    ['Base Fee', info.base_fee ? `$${info.base_fee}/visit` : null],
+    ['Scope', info.scope],
+    ['Customer Since', info.customer_start],
+    ['Completed Jobs', info.completed_jobs],
+    ['Total Revenue', info.total_revenue ? `$${info.total_revenue}` : null],
+    ['Last Job', info.last_job],
+    ['Last Contact', info.last_contact],
+    ['Avg Scorecard', info.avg_scorecard],
+  ].filter(([, v]) => v);
 
   if (!fields.length) return null;
 
   return (
-    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex gap-3 items-start">
-      <div className="text-blue-500 text-lg mt-0.5">⊙</div>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1.5">
-          MaidCentral Profile Found — {info.name}
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
-          {fields.map((f, i) => (
-            <span key={i} className="text-sm text-blue-800">{f}</span>
-          ))}
-        </div>
-        {info.cancelled_date && (
-          <div className="mt-2 text-xs text-red-600 font-medium">
-            ⚠ Previously cancelled {info.cancelled_date}
-            {info.cancellation_reason ? ` — ${info.cancellation_reason}` : ''}
-          </div>
+    <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 overflow-hidden">
+      <div className="px-4 py-2.5 bg-blue-600 flex items-center gap-2">
+        <span className="text-white text-sm font-semibold">⊙ MaidCentral Profile — {info.name}</span>
+        {(info.cancelled_date || info.cancellation_reason) && (
+          <span className="ml-auto text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-medium">⚠ Previously Cancelled</span>
         )}
       </div>
-      <button onClick={onDismiss} className="text-blue-400 hover:text-blue-600 text-lg leading-none mt-0.5">×</button>
+      <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5">
+        {fields.map(([label, val]) => (
+          <div key={label} className="text-sm">
+            <span className="text-blue-500 text-xs">{label}: </span>
+            <span className="text-blue-900 font-medium">{val}</span>
+          </div>
+        ))}
+      </div>
+      {info.cancellation_reason && (
+        <div className="px-4 pb-3 text-xs text-red-600">
+          Prior cancellation reason: {info.cancellation_reason}
+          {info.cancellation_notes ? ` — ${info.cancellation_notes}` : ''}
+        </div>
+      )}
+      <div className="px-4 py-2 bg-blue-100 text-xs text-blue-600 border-t border-blue-200">
+        ✓ This data will be sent to AI automatically — no copy-paste needed
+      </div>
     </div>
   );
 }
@@ -81,17 +89,15 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   const [evalId, setEvalId] = useState('');
   const [driveInfo, setDriveInfo] = useState(null);
   const [driveLoading, setDriveLoading] = useState(false);
-  const [driveDismissed, setDriveDismissed] = useState(false);
   const lookupTimer = useRef(null);
 
   const set = (key) => (val) => setForm(f => ({ ...f, [key]: val }));
 
-  // Auto-lookup Drive data when client name changes (debounced 600ms)
   const handleClientNameChange = (val) => {
     setForm(f => ({ ...f, client_name: val }));
-    setDriveDismissed(false);
     clearTimeout(lookupTimer.current);
-    if (val.trim().length < 3) { setDriveInfo(null); return; }
+    setDriveInfo(null);
+    if (val.trim().length < 3) { setDriveLoading(false); return; }
     setDriveLoading(true);
     lookupTimer.current = setTimeout(async () => {
       const result = await lookupClient(val.trim());
@@ -106,7 +112,8 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
     setError(null);
     setSaving(true);
     try {
-      const res = await api.saveIntake({ ...form });
+      const payload = { ...form, drive_data: driveInfo || null };
+      const res = await api.saveIntake(payload);
       const id = res.evaluation_id;
       setEvalId(id);
       setForm(f => ({ ...f, evaluation_id: id }));
@@ -120,19 +127,23 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   };
 
   const handleAnalyze = async () => {
-    let id = evalId || form.evaluation_id;
-    if (!id) {
-      await handleSave();
-      id = evalId;
-    }
     if (!form.client_name?.trim()) { setError('Client name is required before analyzing.'); return; }
+    if (!form.cancellation_reason?.trim()) { setError('Cancellation reason is required before analyzing.'); return; }
     setError(null);
     setAnalyzing(true);
     try {
-      const intakeData = { ...form, evaluation_id: id || evalId };
+      let id = evalId || form.evaluation_id;
+      if (!id) {
+        const res = await api.saveIntake({ ...form, drive_data: driveInfo || null });
+        id = res.evaluation_id;
+        setEvalId(id);
+        setForm(f => ({ ...f, evaluation_id: id }));
+        setActiveEvalId(id);
+      }
+      const intakeData = { ...form, evaluation_id: id, drive_data: driveInfo || null };
       const res = await api.analyze(intakeData);
       setActiveAnalysis({ intake: intakeData, analysis: res.analysis });
-      setActiveEvalId(intakeData.evaluation_id);
+      setActiveEvalId(id);
       setPage('report');
     } catch (e) {
       setError(`Analysis failed: ${e.message}`);
@@ -148,30 +159,19 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
     setEvalId('');
     setError(null);
     setDriveInfo(null);
-    setDriveDismissed(false);
+    setDriveLoading(false);
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 pb-32">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-32">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">New Client Evaluation</h1>
-        <p className="text-gray-500 mt-1">Complete all available fields before running AI analysis.</p>
-        {evalId && (
-          <p className="text-xs text-blue-600 mt-2 font-mono">Evaluation ID: {evalId}</p>
-        )}
+        <p className="text-gray-500 mt-1">Enter the client name and cancellation reason — CRIS pulls the rest from MaidCentral automatically.</p>
+        {evalId && <p className="text-xs text-blue-600 mt-2 font-mono">Evaluation ID: {evalId}</p>}
       </div>
 
       {error && <Alert type="error" onClose={() => setError(null)} className="mb-4">{error}</Alert>}
-      {saved && !analyzing && <Alert type="success" className="mb-4">Evaluation saved. Evaluation ID: <strong>{evalId}</strong></Alert>}
-
-      {/* Drive autofill banner */}
-      {!driveDismissed && (driveLoading ? (
-        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex items-center gap-2 text-sm text-gray-400">
-          <Spinner size="sm" /> Looking up MaidCentral profile…
-        </div>
-      ) : (
-        <DriveAutofillBanner info={driveInfo} onDismiss={() => setDriveDismissed(true)} />
-      ))}
+      {saved && !analyzing && <Alert type="success" className="mb-4">Saved — ID: <strong>{evalId}</strong></Alert>}
 
       {/* Case Info */}
       <Card className="mb-6">
@@ -187,11 +187,11 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
                 label="Client Name"
                 value={form.client_name}
                 onChange={handleClientNameChange}
-                placeholder="Full client name — MaidCentral profile loads automatically"
+                placeholder="Type client name — profile loads automatically"
                 required
               />
             </div>
-            <Input label="Customer ID" value={form.customer_id} onChange={set('customer_id')} placeholder="Maid Central Customer ID" />
+            <Input label="Customer ID (optional)" value={form.customer_id} onChange={set('customer_id')} placeholder="MaidCentral Customer ID" />
             <Select label="Contact Method" value={form.contact_method} onChange={set('contact_method')} options={[
               { value: 'Phone', label: 'Phone' },
               { value: 'SMS', label: 'SMS' },
@@ -210,101 +210,30 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
         </CardBody>
       </Card>
 
-      {/* Cancellation */}
+      {/* MaidCentral profile — auto-loaded */}
+      <DriveProfileCard info={driveInfo} loading={driveLoading} />
+
+      {/* Cancellation reason — only manual input needed */}
       <Card className="mb-6">
         <CardHeader>
           <h2 className="font-bold text-gray-800">Cancellation Details</h2>
         </CardHeader>
-        <CardBody className="space-y-5">
+        <CardBody>
           <TextArea
             label="Cancellation Reason"
             instruction="Type exactly what the customer said, even if incomplete."
             value={form.cancellation_reason}
             onChange={set('cancellation_reason')}
             placeholder="e.g. 'We're moving next month' or 'Prices are too high for us right now'"
-            rows={4}
+            rows={5}
             required
-          />
-          <TextArea
-            label="Customer Overview"
-            instruction="Paste the Maid Central customer overview section here, including customer since, last cleaning, next cleaning, revenue, revenue last 12 months, scorecard percentage, and customer stats."
-            value={form.customer_overview_paste}
-            onChange={set('customer_overview_paste')}
-            placeholder="Paste from Maid Central..."
-            rows={6}
-          />
-        </CardBody>
-      </Card>
-
-      {/* Service Data */}
-      <Card className="mb-6">
-        <CardHeader>
-          <h2 className="font-bold text-gray-800">Service & Scorecard Data</h2>
-        </CardHeader>
-        <CardBody className="space-y-5">
-          <TextArea
-            label="Scorecards"
-            instruction="Paste all available scorecards from Maid Central."
-            value={form.scorecards_paste}
-            onChange={set('scorecards_paste')}
-            placeholder="Paste scorecards..."
-            rows={6}
-          />
-          <TextArea
-            label="Technician History"
-            instruction="Paste technician history from Maid Central."
-            value={form.technician_history_paste}
-            onChange={set('technician_history_paste')}
-            placeholder="Paste technician history..."
-            rows={5}
-          />
-          <TextArea
-            label="Service Set Information"
-            instruction="Paste service set information from Maid Central, including frequency, base fee, base hours, allowed hours, preferred day/time, arrival window, default team, special instructions, and tags."
-            value={form.service_set_paste}
-            onChange={set('service_set_paste')}
-            placeholder="Paste service set..."
-            rows={6}
-          />
-          <TextArea
-            label="Technician Preferences"
-            instruction="Paste technician preferences from Maid Central."
-            value={form.technician_preferences_paste}
-            onChange={set('technician_preferences_paste')}
-            placeholder="Paste technician preferences..."
-            rows={4}
-          />
-        </CardBody>
-      </Card>
-
-      {/* Notes */}
-      <Card className="mb-6">
-        <CardHeader>
-          <h2 className="font-bold text-gray-800">Notes & Communications</h2>
-        </CardHeader>
-        <CardBody className="space-y-5">
-          <TextArea
-            label="Internal Notes"
-            instruction="Paste notes related to complaints, credits, refunds, previous save attempts, policy concerns, relationship concerns, positive history, or difficult interactions."
-            value={form.internal_notes_paste}
-            onChange={set('internal_notes_paste')}
-            placeholder="Paste internal notes..."
-            rows={6}
-          />
-          <TextArea
-            label="Relevant SMS / Email (Optional)"
-            instruction="Paste any relevant client messages that provide context."
-            value={form.relevant_sms_email_paste}
-            onChange={set('relevant_sms_email_paste')}
-            placeholder="Paste messages (optional)..."
-            rows={5}
           />
         </CardBody>
       </Card>
 
       {/* Sticky action bar */}
       <div className="fixed bottom-0 left-0 right-0 lg:left-64 bg-white border-t border-gray-200 px-4 sm:px-6 py-4 z-10">
-        <div className="max-w-4xl mx-auto flex items-center gap-3 flex-wrap">
+        <div className="max-w-3xl mx-auto flex items-center gap-3 flex-wrap">
           <Btn onClick={handleAnalyze} disabled={analyzing || saving} variant="primary" size="lg" className="flex-1 sm:flex-none">
             {analyzing ? <><Spinner size="sm" /> Analyzing with AI...</> : '⊙ Analyze Client'}
           </Btn>
