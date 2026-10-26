@@ -44,14 +44,6 @@ function ScoreRing({ score }) {
   );
 }
 
-const AUDIT_REASONS = [
-  'CT says it takes too long',
-  'Client complained',
-  'Rate review',
-  'Churn risk',
-  'New CT taking over',
-  'Other',
-];
 
 export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEvalId }) {
   const [search, setSearch] = useState('');
@@ -63,7 +55,6 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [auditReasons, setAuditReasons] = useState([]);
 
   useEffect(() => {
     api.getEvaluations()
@@ -174,30 +165,6 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
 
         {!selected ? (
           <div style={{ maxWidth: 560 }}>
-            {/* Audit reason chips — shown before client is selected so staff picks reason first */}
-            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, marginBottom: 24, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#1e293b' }}>Why are you running this audit?</div>
-                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Select all that apply, then pick a client from the left</div>
-              </div>
-              <div style={{ padding: '16px 20px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {AUDIT_REASONS.map(r => {
-                  const active = auditReasons.includes(r);
-                  return (
-                    <button key={r} onClick={() => setAuditReasons(prev => active ? prev.filter(x => x !== r) : [...prev, r])}
-                      style={{
-                        padding: '7px 16px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                        border: active ? '2px solid #2563eb' : '1.5px solid #e2e8f0',
-                        background: active ? '#eff6ff' : '#fff',
-                        color: active ? '#1d4ed8' : '#64748b',
-                        transition: 'all 0.12s',
-                      }}>
-                      {active ? '✓ ' : ''}{r}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#cbd5e1' }}>
               <svg width={32} height={32} fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ opacity: 0.5, flexShrink: 0 }}>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0" />
@@ -234,15 +201,6 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
               )}
             </div>
 
-            {/* Audit reason summary — shows selected reasons after client is picked */}
-            {auditReasons.length > 0 && (
-              <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 16px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8', marginRight: 4 }}>Audit reason:</span>
-                {auditReasons.map(r => (
-                  <span key={r} style={{ fontSize: 12, background: '#dbeafe', color: '#1e40af', borderRadius: 12, padding: '2px 10px', fontWeight: 600 }}>✓ {r}</span>
-                ))}
-              </div>
-            )}
 
             {/* MaidCentral data */}
             {driveInfo && (
