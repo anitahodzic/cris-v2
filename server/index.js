@@ -63,9 +63,15 @@ async function getLatestDriveCSV(folderId) {
     fields: 'files(id,name,modifiedTime)',
   });
   const file = list.data.files?.[0];
-  if (!file) return [];
+  if (!file) {
+    console.warn(`getLatestDriveCSV: no CSV found in folder ${folderId}`);
+    return { rows: [], date: null, filename: null };
+  }
+  console.log(`getLatestDriveCSV: reading ${file.name} from folder ${folderId}`);
   const res = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'text' });
-  return { rows: parseCSV(res.data), date: file.modifiedTime, filename: file.name };
+  const rows = parseCSV(res.data);
+  console.log(`getLatestDriveCSV: parsed ${rows.length} rows from ${file.name}`);
+  return { rows, date: file.modifiedTime, filename: file.name };
 }
 
 // Simple in-memory cache (5 min TTL)
@@ -99,6 +105,35 @@ function generateEvalId() {
 // ─── API Routes ───────────────────────────────────────────────────────────────
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// Debug: test Drive folder access and CSV reading
+app.get('/api/debug/drive', async (req, res) => {
+  try {
+    const drive = await getDrive();
+    const results = {};
+    for (const [label, folderId] of [['customers', DRIVE_FOLDER_CUSTOMERS], ['cancelled', DRIVE_FOLDER_CANCELLED]]) {
+      try {
+        const list = await drive.files.list({
+          q: `'${folderId}' in parents and trashed=false`,
+          orderBy: 'modifiedTime desc',
+          pageSize: 5,
+          fields: 'files(id,name,mimeType,modifiedTime)',
+        });
+        const files = list.data.files || [];
+        const csvFile = files.find(f => f.mimeType === 'text/csv');
+        let rowCount = null;
+        if (csvFile) {
+          const content = await drive.files.get({ fileId: csvFile.id, alt: 'media' }, { responseType: 'text' });
+          rowCount = parseCSV(content.data).length;
+        }
+        results[label] = { folderId, fileCount: files.length, files: files.map(f => ({ name: f.name, mimeType: f.mimeType })), csvFile: csvFile?.name || null, rowCount };
+      } catch (e) {
+        results[label] = { folderId, error: e.message };
+      }
+    }
+    res.json(results);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // Debug: list all sheet tab names
 app.get('/api/debug/sheets', async (req, res) => {
@@ -689,6 +724,178 @@ app.get('/api/technician-report', async (req, res) => {
     });
   } catch (err) {
     console.error('technician-report error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Customer Account Audit (AI-powered) ──────────────────────────────────
+// POST /api/account-audit/run
+// Body: { client_name, drive_data? }
+// Looks up Drive CSV data for the client, then asks Claude to produce a
+// structured audit report as JSON.
+app.post('/api/account-audit/run', async (req, res) => {
+  try {
+    const { client_name, drive_data } = req.body || {};
+    if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'client_name is required' });
+
+    // 1. Resolve Drive profile — prefer pre-fetched drive_data from frontend
+    let profile = null;
+    let cancellation = null;
+
+    if (drive_data) {
+      profile = drive_data;
+      if (drive_data._type === 'cancelled' || drive_data._type === 'both') cancellation = drive_data;
+    } else {
+      const [custData, cancData] = await Promise.all([
+        cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+        cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
+      ]);
+      const lower = client_name.trim().toLowerCase();
+      profile = (custData.rows || []).find(r => {
+        const n = `${r.First || ''} ${r.Last || ''}`.trim().toLowerCase();
+        return n === lower || n.includes(lower) || lower.includes(n);
+      }) || null;
+      cancellation = (cancData.rows || []).find(r => {
+        const n = (r.Customer || '').trim().toLowerCase();
+        return n === lower || n.includes(lower) || lower.includes(n);
+      }) || null;
+    }
+
+    // 2. Build a structured context block for the prompt
+    const lines = [];
+    lines.push(`CLIENT: ${client_name.trim()}`);
+    lines.push(`AUDIT DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`);
+    lines.push('');
+
+    if (profile) {
+      lines.push('MAIDCENTRAL PROFILE (current customers export):');
+      const addr = [profile['Address 1'] || profile.address, profile['City'] || profile.city, profile['State'] || profile.state, profile['Zip'] || profile.zip].filter(Boolean).join(', ');
+      if (addr) lines.push(`  Address: ${addr}`);
+      if (profile['Cell Phone'] || profile.phone) lines.push(`  Phone: ${profile['Cell Phone'] || profile.phone}`);
+      if (profile.Email || profile.email) lines.push(`  Email: ${profile.Email || profile.email}`);
+      if (profile.Frequency || profile.frequency) lines.push(`  Frequency: ${profile.Frequency || profile.frequency}`);
+      if (profile['Base Fee'] || profile.base_fee) lines.push(`  Base Fee per Visit: $${profile['Base Fee'] || profile.base_fee}`);
+      if (profile['Scope of Work'] || profile.scope) lines.push(`  Scope of Work: ${profile['Scope of Work'] || profile.scope}`);
+      if (profile['Customer Start'] || profile.customer_start) lines.push(`  Customer Since: ${profile['Customer Start'] || profile.customer_start}`);
+      if (profile['Completed Jobs'] || profile.completed_jobs) lines.push(`  Completed Jobs: ${profile['Completed Jobs'] || profile.completed_jobs}`);
+      if (profile['Total Revenue'] || profile.total_revenue) lines.push(`  Total Lifetime Revenue: $${profile['Total Revenue'] || profile.total_revenue}`);
+      if (profile['Last 12 Revenue'] || profile.last_12_revenue) lines.push(`  Last 12 Months Revenue: $${profile['Last 12 Revenue'] || profile.last_12_revenue}`);
+      if (profile['Last Job'] || profile.last_job) lines.push(`  Last Job Date: ${profile['Last Job'] || profile.last_job}`);
+      if (profile['Pending Jobs'] || profile.pending_jobs) lines.push(`  Pending Jobs: ${profile['Pending Jobs'] || profile.pending_jobs}`);
+      if (profile['Last Contact'] || profile.last_contact) lines.push(`  Last Contact: ${profile['Last Contact'] || profile.last_contact}`);
+    } else {
+      lines.push('MAIDCENTRAL PROFILE: Not found in current-customers export.');
+    }
+
+    if (cancellation) {
+      lines.push('');
+      lines.push('CANCELLATION HISTORY (cancelled-service export):');
+      if (cancellation['Date of Cancellation']) lines.push(`  Date Cancelled: ${cancellation['Date of Cancellation']}`);
+      if (cancellation.Reason || cancellation.reason) lines.push(`  Cancellation Reason: ${cancellation.Reason || cancellation.reason}`);
+      if (cancellation['Avg. Scorecard'] || cancellation.avg_scorecard) lines.push(`  Avg Scorecard at Cancellation: ${cancellation['Avg. Scorecard'] || cancellation.avg_scorecard}`);
+      if (cancellation['Last Scorecard'] || cancellation.last_scorecard) lines.push(`  Last Scorecard: ${cancellation['Last Scorecard'] || cancellation.last_scorecard}`);
+      if (cancellation['Cancelled within 60'] || cancellation.cancelled_within_60) lines.push(`  Cancelled Within 60 Days of Start: ${cancellation['Cancelled within 60'] || cancellation.cancelled_within_60}`);
+      if (cancellation['Default Team(s)'] || cancellation.default_teams) lines.push(`  Default Team: ${cancellation['Default Team(s)'] || cancellation.default_teams}`);
+      if (cancellation['Lead Source'] || cancellation.lead_source) lines.push(`  Lead Source: ${cancellation['Lead Source'] || cancellation.lead_source}`);
+      if (cancellation.Notes || cancellation.cancellation_notes) lines.push(`  Notes: ${cancellation.Notes || cancellation.cancellation_notes}`);
+    }
+
+    const dataBlock = lines.join('\n');
+
+    // 3. Prompt Claude for a structured audit
+    const systemPrompt = `You are CRIS — the Client Relationship Intelligence System for BA House Cleaning, a Diamond Certified residential cleaning company in the East Bay, California.
+
+You are generating a Customer Account Audit. This is NOT a cancellation evaluation — the client may be active and in good standing. Your job is to assess the health of this account based on the MaidCentral data available and return a structured JSON report that helps the team understand whether action is needed.
+
+BA House Cleaning's core values: WOW, Integrity, Respect, Accountability, Professionalism.
+
+DATA AVAILABLE: You have aggregate MaidCentral data (lifetime totals, last job date, revenue, scorecard averages). You do NOT have per-visit detail rows — synthesize from what is available and be transparent about uncertainty.
+
+You MUST return ONLY valid JSON matching this exact schema, with no markdown fencing or explanation:
+{
+  "status": "On Track" | "Needs Attention" | "Urgent",
+  "status_reason": "one short phrase (≤10 words) explaining the status",
+  "summary": "2-3 sentences synthesizing the account health signals",
+  "review_window": "describe what data was available and any caveats",
+  "signals": {
+    "time": {
+      "headline": "short headline",
+      "detail": "what we know about time/frequency patterns"
+    },
+    "quality": {
+      "headline": "short headline (score or N/A)",
+      "detail": "what we know about quality signals"
+    },
+    "feedback": {
+      "headline": "short headline",
+      "detail": "what we know about client feedback or contact history"
+    },
+    "tech": {
+      "headline": "short headline",
+      "detail": "any technician-related observations (use 'No concerns noted' if none)"
+    }
+  },
+  "recommendation": {
+    "action": "specific recommended action (1-2 sentences)",
+    "why": "evidence-based reason for this recommendation",
+    "evidence_count": "how many data signals support this"
+  },
+  "next_step": {
+    "action": "specific next step (1-2 sentences)",
+    "owner": "who should do this (Team Lead / Office / Staff / etc.)",
+    "due": "when",
+    "review_point": "when to follow up"
+  }
+}`;
+
+    const userPrompt = `Run a Customer Account Audit for the following client:\n\n${dataBlock}\n\nAssess account health, identify any signals worth attention, and return the structured JSON audit report.`;
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const rawText = message.content[0].text;
+    let audit;
+    try {
+      audit = JSON.parse(rawText);
+    } catch {
+      const m = rawText.match(/\{[\s\S]*\}/);
+      if (m) audit = JSON.parse(m[0]);
+      else throw new Error('Claude did not return valid JSON');
+    }
+
+    res.json({
+      ok: true,
+      client_name: client_name.trim(),
+      profile: profile ? {
+        address: [profile['Address 1'] || profile.address, profile['City'] || profile.city, profile['State'] || profile.state].filter(Boolean).join(', '),
+        phone: profile['Cell Phone'] || profile.phone || null,
+        email: profile.Email || profile.email || null,
+        frequency: profile.Frequency || profile.frequency || null,
+        base_fee: profile['Base Fee'] || profile.base_fee || null,
+        scope: profile['Scope of Work'] || profile.scope || null,
+        customer_start: profile['Customer Start'] || profile.customer_start || null,
+        completed_jobs: profile['Completed Jobs'] || profile.completed_jobs || null,
+        total_revenue: profile['Total Revenue'] || profile.total_revenue || null,
+        last_12_revenue: profile['Last 12 Revenue'] || profile.last_12_revenue || null,
+        last_job: profile['Last Job'] || profile.last_job || null,
+        pending_jobs: profile['Pending Jobs'] || profile.pending_jobs || null,
+        last_contact: profile['Last Contact'] || profile.last_contact || null,
+      } : null,
+      cancellation: cancellation ? {
+        date: cancellation['Date of Cancellation'] || null,
+        reason: cancellation.Reason || cancellation.reason || null,
+        avg_scorecard: cancellation['Avg. Scorecard'] || cancellation.avg_scorecard || null,
+        last_scorecard: cancellation['Last Scorecard'] || cancellation.last_scorecard || null,
+        notes: cancellation.Notes || cancellation.cancellation_notes || null,
+      } : null,
+      audit,
+    });
+  } catch (err) {
+    console.error('account-audit/run error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
