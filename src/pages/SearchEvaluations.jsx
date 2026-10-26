@@ -16,7 +16,6 @@ async function getDriveMap() {
       fetch(`${BASE}/api/drive-customers`).then(r => r.json()),
       fetch(`${BASE}/api/drive-cancelled`).then(r => r.json()),
     ]);
-    // endpoints return { rows, date, filename }
     const curr = currRes.rows || (Array.isArray(currRes) ? currRes : []);
     const canc = cancRes.rows || (Array.isArray(cancRes) ? cancRes : []);
     const map = {};
@@ -42,7 +41,6 @@ function matchDrive(map, name) {
   if (!name || !map) return null;
   const lower = name.trim().toLowerCase();
   if (map[lower]) return map[lower];
-  // Partial match — find first key that starts with or contains the name
   for (const [k, v] of Object.entries(map)) {
     if (k.includes(lower) || lower.includes(k)) return v;
   }
@@ -51,7 +49,6 @@ function matchDrive(map, name) {
 
 function DrivePills({ info }) {
   if (!info) return null;
-  // Support both raw CSV column names (from drive-customers) and normalized names (from client-lookup)
   const phone = info['Cell Phone'] || info.phone;
   const frequency = info.Frequency || info.frequency;
   const baseFee = info['Base Fee'] || info.base_fee;
@@ -80,9 +77,94 @@ function DrivePills({ info }) {
   );
 }
 
-export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiveEvalId }) {
+// ── Client autocomplete (same as NewEvaluation) ──────────────────────────────
+async function searchClients(q) {
+  if (!q || q.length < 2) return [];
+  try {
+    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(q)}`);
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+function ClientAutocomplete({ value, onChange }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef(null);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleChange = (val) => {
+    onChange(val);
+    clearTimeout(timer.current);
+    if (val.trim().length < 2) { setSuggestions([]); setOpen(false); return; }
+    setLoading(true);
+    timer.current = setTimeout(async () => {
+      const results = await searchClients(val.trim());
+      setSuggestions(results);
+      setOpen(results.length > 0);
+      setLoading(false);
+    }, 300);
+  };
+
+  const handlePick = (client) => {
+    onChange(client.name);
+    setSuggestions([]);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Input
+          label="Client Name"
+          value={value}
+          onChange={handleChange}
+          placeholder="Start typing client name…"
+          autoComplete="off"
+        />
+        {loading && (
+          <span style={{ position: 'absolute', right: 10, top: '65%', transform: 'translateY(-50%)' }}>
+            <Spinner size="sm" />
+          </span>
+        )}
+      </div>
+      {open && suggestions.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 1000, left: 0, right: 0, top: '100%',
+          background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', margin: 0, padding: 0,
+          listStyle: 'none', maxHeight: 280, overflowY: 'auto',
+        }}>
+          {suggestions.map((c, i) => (
+            <li key={i}
+              onMouseDown={() => handlePick(c)}
+              style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#eff6ff'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+            >
+              <div style={{ fontWeight: 600, fontSize: 14, color: '#1e293b' }}>{c.name}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                {[c.frequency, c.address].filter(Boolean).join(' · ')}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiveEvalId, currentUser }) {
   const [filters, setFilters] = useState({
-    client_name: '', evaluation_id: '', staff_name: '',
+    client_name: '', evaluation_id: '', staff_name: currentUser?.username || '',
     status: '', outcome_filter: '', program: '',
     date_from: '', date_to: '',
   });
@@ -92,6 +174,13 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
   const [searched, setSearched] = useState(false);
   const [driveMap, setDriveMap] = useState(null);
   const driveLoaded = useRef(false);
+
+  // Keep staff_name in sync if currentUser loads after mount
+  useEffect(() => {
+    if (currentUser?.username && !filters.staff_name) {
+      setFilters(f => ({ ...f, staff_name: currentUser.username }));
+    }
+  }, [currentUser]);
 
   const set = k => v => setFilters(f => ({ ...f, [k]: v }));
 
@@ -103,7 +192,6 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
       const data = await api.getEvaluations(clean);
       setResults(data);
       setSearched(true);
-      // Load Drive data in background after results render
       if (!driveLoaded.current) {
         driveLoaded.current = true;
         getDriveMap().then(setDriveMap);
@@ -144,9 +232,24 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
       <Card className="mb-6">
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-            <Input label="Client Name" value={filters.client_name} onChange={set('client_name')} placeholder="Search by name..." />
+            {/* Client Name with autocomplete dropdown */}
+            <ClientAutocomplete
+              value={filters.client_name}
+              onChange={set('client_name')}
+            />
             <Input label="Evaluation ID" value={filters.evaluation_id} onChange={set('evaluation_id')} placeholder="CRIS-..." />
-            <Input label="Staff Member" value={filters.staff_name} onChange={set('staff_name')} placeholder="Staff name..." />
+            {/* Staff Member — pre-filled from logged-in user, still editable */}
+            <div>
+              <Input
+                label="Staff Member"
+                value={filters.staff_name}
+                onChange={set('staff_name')}
+                placeholder="Staff name..."
+              />
+              {currentUser?.username && filters.staff_name === currentUser.username && (
+                <p className="text-xs text-blue-500 mt-1">Showing your evaluations · <button className="underline" onClick={() => set('staff_name')('')}>Clear to see all</button></p>
+              )}
+            </div>
             <Select label="Status" value={filters.status} onChange={set('status')} options={[
               { value: '', label: 'All Statuses' },
               { value: 'New', label: 'New' },
@@ -201,7 +304,6 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
                         </Badge>
                       )}
                     </div>
-                    {/* Drive pills — appear once Drive data loads */}
                     <DrivePills info={drive} />
                     <div className="text-xs text-gray-500 space-y-0.5 mt-1.5">
                       <div><span className="font-mono">{row.Evaluation_ID}</span> · {row.Staff_Name} · {row.Created_Date ? new Date(row.Created_Date).toLocaleDateString() : ''}</div>

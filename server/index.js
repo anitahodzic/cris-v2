@@ -1032,16 +1032,23 @@ app.get('/api/risk-scan', async (req, res) => {
       return res.json(riskScanCache.data);
     }
 
-    // Load all three datasets in parallel
-    const [custData, cancelledData, scorecardData] = await Promise.all([
+    // Load all three datasets independently so one failure doesn't break the whole scan
+    const [custResult2, cancelledResult2, scorecardResult2] = await Promise.allSettled([
       cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
       cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
       cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
     ]);
 
-    const customers = custData.rows || [];
-    const cancelled = cancelledData.rows || [];
-    const scorecards = scorecardData.rows || [];
+    if (custResult2.status === 'rejected') {
+      console.error('risk-scan: customers folder failed:', custResult2.reason?.message);
+      return res.status(503).json({ error: 'Could not load customer data from Drive: ' + custResult2.reason?.message });
+    }
+    if (cancelledResult2.status === 'rejected') console.warn('risk-scan: cancelled folder failed (non-fatal):', cancelledResult2.reason?.message);
+    if (scorecardResult2.status === 'rejected') console.warn('risk-scan: scorecards folder failed (non-fatal):', scorecardResult2.reason?.message);
+
+    const customers = custResult2.value.rows || [];
+    const cancelled = cancelledResult2.status === 'fulfilled' ? (cancelledResult2.value.rows || []) : [];
+    const scorecards = scorecardResult2.status === 'fulfilled' ? (scorecardResult2.value.rows || []) : [];
 
     // Build cancelled name set for quick lookup
     const cancelledNames = new Set(
@@ -1108,25 +1115,36 @@ app.post('/api/ask-cris', async (req, res) => {
   try {
     const { messages = [], question } = req.body;
 
-    // Load Drive data for context (use cache)
+    // Load Drive data for context (use cache) — load each independently so one failure doesn't kill all
     let contextBlocks = [];
-    try {
-      const [custData, cancelledData, scorecardData] = await Promise.all([
-        cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
-        cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
-        cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
-      ]);
+    const [custResult, cancelledResult, scorecardResult] = await Promise.allSettled([
+      cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+      cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
+      cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
+    ]);
 
-      const customers  = (custData.rows  || []).slice(0, 400); // cap for token budget
-      const cancelled  = (cancelledData.rows  || []).slice(0, 200);
-      const scorecards = (scorecardData.rows || []).slice(0, 400);
-
-      if (customers.length)  contextBlocks.push(`## Current Customers (${customers.length} rows)\n${JSON.stringify(customers, null, 0).slice(0, 40000)}`);
-      if (cancelled.length)  contextBlocks.push(`## Cancelled Customers (${cancelled.length} rows)\n${JSON.stringify(cancelled, null, 0).slice(0, 20000)}`);
+    if (custResult.status === 'fulfilled') {
+      const customers = (custResult.value.rows || []).slice(0, 400);
+      if (customers.length) contextBlocks.push(`## Current Customers (${customers.length} rows)\n${JSON.stringify(customers, null, 0).slice(0, 40000)}`);
+      else console.warn('ask-cris: customers folder returned 0 rows');
+    } else {
+      console.error('ask-cris: customers Drive load failed:', custResult.reason?.message);
+    }
+    if (cancelledResult.status === 'fulfilled') {
+      const cancelled = (cancelledResult.value.rows || []).slice(0, 200);
+      if (cancelled.length) contextBlocks.push(`## Cancelled Customers (${cancelled.length} rows)\n${JSON.stringify(cancelled, null, 0).slice(0, 20000)}`);
+    } else {
+      console.error('ask-cris: cancelled Drive load failed:', cancelledResult.reason?.message);
+    }
+    if (scorecardResult.status === 'fulfilled') {
+      const scorecards = (scorecardResult.value.rows || []).slice(0, 400);
       if (scorecards.length) contextBlocks.push(`## Scorecard Averages (${scorecards.length} rows)\n${JSON.stringify(scorecards, null, 0).slice(0, 20000)}`);
-    } catch (driveErr) {
-      console.warn('ask-cris: Drive data unavailable:', driveErr.message);
-      contextBlocks.push('## Note\nDrive data could not be loaded at this time. Answering from general knowledge.');
+    } else {
+      console.warn('ask-cris: scorecards Drive load failed (non-critical):', scorecardResult.reason?.message);
+    }
+
+    if (contextBlocks.length === 0) {
+      contextBlocks.push('## Note\nLive Drive data could not be loaded. Please answer from any available Sheets data below and general knowledge about BA House Cleaning.');
     }
 
     // Also pull Sheets data (Programs, Policies, Settings) if available
