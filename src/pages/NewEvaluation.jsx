@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import { Card, CardHeader, CardBody, Btn, TextArea, Input, Select, Alert, Spinner } from '../components/UI';
+
+const BASE = process.env.REACT_APP_API_URL || '';
 
 const EMPTY = {
   evaluation_id: '',
@@ -19,6 +21,57 @@ const EMPTY = {
   relevant_sms_email_paste: '',
 };
 
+async function lookupClient(name) {
+  if (!name || name.length < 2) return null;
+  try {
+    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(name)}`);
+    const data = await res.json();
+    const lower = name.toLowerCase();
+    return data.find(d => d.name?.toLowerCase() === lower) || data[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function DriveAutofillBanner({ info, onDismiss }) {
+  if (!info) return null;
+  const fields = [
+    info.phone && `📞 ${info.phone}`,
+    info.email && `✉ ${info.email}`,
+    info.frequency && `🔁 ${info.frequency}`,
+    info.base_fee && `💵 $${info.base_fee}/visit`,
+    info.scope && `🧹 ${info.scope}`,
+    info.customer_start && `📅 Since ${info.customer_start}`,
+    info.completed_jobs && `✓ ${info.completed_jobs} jobs`,
+    info.total_revenue && `$ ${info.total_revenue} total rev`,
+  ].filter(Boolean);
+
+  if (!fields.length) return null;
+
+  return (
+    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex gap-3 items-start">
+      <div className="text-blue-500 text-lg mt-0.5">⊙</div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1.5">
+          MaidCentral Profile Found — {info.name}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {fields.map((f, i) => (
+            <span key={i} className="text-sm text-blue-800">{f}</span>
+          ))}
+        </div>
+        {info.cancelled_date && (
+          <div className="mt-2 text-xs text-red-600 font-medium">
+            ⚠ Previously cancelled {info.cancelled_date}
+            {info.cancellation_reason ? ` — ${info.cancellation_reason}` : ''}
+          </div>
+        )}
+      </div>
+      <button onClick={onDismiss} className="text-blue-400 hover:text-blue-600 text-lg leading-none mt-0.5">×</button>
+    </div>
+  );
+}
+
 export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnalysis }) {
   const [form, setForm] = useState({ ...EMPTY, created_date: new Date().toISOString() });
   const [saving, setSaving] = useState(false);
@@ -26,8 +79,26 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
   const [evalId, setEvalId] = useState('');
+  const [driveInfo, setDriveInfo] = useState(null);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveDismissed, setDriveDismissed] = useState(false);
+  const lookupTimer = useRef(null);
 
   const set = (key) => (val) => setForm(f => ({ ...f, [key]: val }));
+
+  // Auto-lookup Drive data when client name changes (debounced 600ms)
+  const handleClientNameChange = (val) => {
+    setForm(f => ({ ...f, client_name: val }));
+    setDriveDismissed(false);
+    clearTimeout(lookupTimer.current);
+    if (val.trim().length < 3) { setDriveInfo(null); return; }
+    setDriveLoading(true);
+    lookupTimer.current = setTimeout(async () => {
+      const result = await lookupClient(val.trim());
+      setDriveInfo(result);
+      setDriveLoading(false);
+    }, 600);
+  };
 
   const handleSave = async () => {
     if (!form.client_name?.trim()) { setError('Client name is required.'); return; }
@@ -51,7 +122,6 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   const handleAnalyze = async () => {
     let id = evalId || form.evaluation_id;
     if (!id) {
-      // Save first
       await handleSave();
       id = evalId;
     }
@@ -77,6 +147,8 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
     setSaved(false);
     setEvalId('');
     setError(null);
+    setDriveInfo(null);
+    setDriveDismissed(false);
   };
 
   return (
@@ -92,6 +164,15 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
       {error && <Alert type="error" onClose={() => setError(null)} className="mb-4">{error}</Alert>}
       {saved && !analyzing && <Alert type="success" className="mb-4">Evaluation saved. Evaluation ID: <strong>{evalId}</strong></Alert>}
 
+      {/* Drive autofill banner */}
+      {!driveDismissed && (driveLoading ? (
+        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex items-center gap-2 text-sm text-gray-400">
+          <Spinner size="sm" /> Looking up MaidCentral profile…
+        </div>
+      ) : (
+        <DriveAutofillBanner info={driveInfo} onDismiss={() => setDriveDismissed(true)} />
+      ))}
+
       {/* Case Info */}
       <Card className="mb-6">
         <CardHeader>
@@ -101,7 +182,15 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Evaluation Date" value={form.created_date?.split('T')[0]} onChange={(v) => setForm(f => ({ ...f, created_date: v }))} type="date" />
             <Input label="Staff Member Name" value={form.staff_name} onChange={set('staff_name')} placeholder="Your name" required />
-            <Input label="Client Name" value={form.client_name} onChange={set('client_name')} placeholder="Full client name" required />
+            <div className="sm:col-span-2">
+              <Input
+                label="Client Name"
+                value={form.client_name}
+                onChange={handleClientNameChange}
+                placeholder="Full client name — MaidCentral profile loads automatically"
+                required
+              />
+            </div>
             <Input label="Customer ID" value={form.customer_id} onChange={set('customer_id')} placeholder="Maid Central Customer ID" />
             <Select label="Contact Method" value={form.contact_method} onChange={set('contact_method')} options={[
               { value: 'Phone', label: 'Phone' },
