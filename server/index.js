@@ -111,6 +111,20 @@ app.get('/api/debug/drive', async (req, res) => {
   try {
     const drive = await getDrive();
     const results = {};
+
+    // Also do a drive-wide search for any CSV files the service account can see
+    try {
+      const wide = await drive.files.list({
+        q: `mimeType='text/csv' and trashed=false`,
+        orderBy: 'modifiedTime desc',
+        pageSize: 20,
+        fields: 'files(id,name,mimeType,modifiedTime,parents)',
+      });
+      results._wide_csv_search = (wide.data.files || []).map(f => ({ name: f.name, id: f.id, parents: f.parents }));
+    } catch (e) {
+      results._wide_csv_search = { error: e.message };
+    }
+
     for (const [label, folderId] of [['customers', DRIVE_FOLDER_CUSTOMERS], ['cancelled', DRIVE_FOLDER_CANCELLED]]) {
       try {
         const list = await drive.files.list({
