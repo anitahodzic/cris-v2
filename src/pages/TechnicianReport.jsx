@@ -37,7 +37,7 @@ export default function TechnicianReport() {
     </div>
   );
 
-  const { techs = [], total_evaluations = 0, total_cancelled = 0 } = data || {};
+  const { techs = [], employee_stats = [], employee_stats_columns = [], total_evaluations = 0, total_cancelled = 0 } = data || {};
 
   const filtered = techs
     .filter(t => t.as_last_cleaner >= minJobs)
@@ -70,6 +70,24 @@ export default function TechnicianReport() {
             This report is built from the "Technician History" field in evaluations.
             Paste MaidCentral's technician history when creating evaluations to populate this report.
           </p>
+          {employee_stats.length > 0 && (
+            <div className="mt-6 text-left max-w-2xl mx-auto">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">Employee Stats from MaidCentral ({employee_stats.length} records)</h4>
+              <p className="text-xs text-gray-400 mb-2">Columns found: {employee_stats_columns.join(', ')}</p>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-gray-50 border-b border-gray-200">
+                    {employee_stats_columns.slice(0,8).map(c => <th key={c} className="px-3 py-2 text-left font-medium text-gray-500">{c}</th>)}
+                  </tr></thead>
+                  <tbody>{employee_stats.slice(0,10).map((row, i) => (
+                    <tr key={i} className="border-b border-gray-100">
+                      {employee_stats_columns.slice(0,8).map(c => <td key={c} className="px-3 py-2 text-gray-700">{row[c] || '—'}</td>)}
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <>

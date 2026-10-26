@@ -681,12 +681,14 @@ app.get('/api/account-audit-enriched', async (req, res) => {
 // ─── Technician Cancellation Report ──────────────────────────────────────
 // Parses Technician_History_Paste from all evaluations to identify which
 // technicians were on cancelled accounts (last cleaner, recent cleans, etc.)
+// Also pulls employee stats from Drive if available.
 app.get('/api/technician-report', async (req, res) => {
   try {
     const sheets = await getSheets();
-    const [intakes, outcomes] = await Promise.all([
+    const [intakes, outcomes, empStatsResult] = await Promise.all([
       readTab(sheets, 'Client_Intake'),
       readTab(sheets, 'Outcomes'),
+      cachedDriveCSV(DRIVE_FOLDER_EMPLOYEE_STATS).catch(e => { console.warn('employee_stats Drive load failed:', e.message); return { rows: [] }; }),
     ]);
     const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
 
@@ -786,8 +788,24 @@ app.get('/api/technician-report', async (req, res) => {
       cancellation_rate: t.as_last_cleaner > 0 ? Math.round((t.cancellations_as_last / t.as_last_cleaner) * 100) : 0,
     })).sort((a, b) => b.cancellations_as_last - a.cancellations_as_last);
 
+    // Merge with employee stats from Drive if available
+    const empStats = empStatsResult.rows || [];
+    const empMap = {};
+    for (const row of empStats) {
+      // Employee stats CSV columns may vary — try common field names
+      const name = (row['Employee Name'] || row['Technician'] || row['Name'] || row['name'] || '').trim();
+      if (name) empMap[name.toLowerCase()] = row;
+    }
+    // Annotate each tech with Drive employee stats if found
+    const enrichedTechs = techs.map(t => {
+      const emp = empMap[t.name.toLowerCase()];
+      return emp ? { ...t, emp_stats: emp } : t;
+    });
+
     res.json({
-      techs,
+      techs: enrichedTechs,
+      employee_stats: empStats,       // raw Drive data (columns vary by MaidCentral export)
+      employee_stats_columns: empStats.length > 0 ? Object.keys(empStats[0]) : [],
       total_evaluations: intakes.length,
       total_cancelled: outcomes.filter(o => o.Outcome === 'Cancelled').length,
     });
