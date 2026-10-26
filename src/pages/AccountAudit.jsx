@@ -70,6 +70,15 @@ function Pill({ label, value }) {
   );
 }
 
+const AUDIT_REASONS = [
+  { id: 'ct_too_long',       label: 'CT says it takes too long' },
+  { id: 'client_complained', label: 'Client complained' },
+  { id: 'rate_review',       label: 'Rate review' },
+  { id: 'churn_risk',        label: 'Churn risk' },
+  { id: 'new_ct',            label: 'New CT taking over' },
+  { id: 'other',             label: 'Other' },
+];
+
 export default function AccountAudit() {
   const [query, setQuery]       = useState('');
   const [suggs, setSuggs]       = useState([]);
@@ -78,7 +87,11 @@ export default function AccountAudit() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
   const [result, setResult]     = useState(null);
+  const [reasons, setReasons]   = useState([]);
   const timer = useRef(null);
+
+  const toggleReason = (id) =>
+    setReasons(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id]);
 
   const handleChange = (val) => {
     setQuery(val);
@@ -108,7 +121,7 @@ export default function AccountAudit() {
       const res = await fetch(`${BASE}/api/account-audit/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null }),
+        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null, audit_reasons: reasons }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Audit failed');
@@ -146,6 +159,34 @@ export default function AccountAudit() {
         <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 4, marginBottom: 0 }}>
           AI-powered account review from MaidCentral data — time, quality, and service signals in seconds.
         </p>
+      </div>
+
+      {/* Audit reason chips */}
+      <div style={{ marginBottom: 24 }}>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>
+          Why are you running this audit?
+        </label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {AUDIT_REASONS.map(r => {
+            const active = reasons.includes(r.id);
+            return (
+              <button
+                key={r.id}
+                onClick={() => toggleReason(r.id)}
+                style={{
+                  padding: '6px 14px', borderRadius: 20, border: `1.5px solid ${active ? '#2563eb' : 'var(--border)'}`,
+                  background: active ? '#eff6ff' : 'var(--card-bg)',
+                  color: active ? '#1d4ed8' : 'var(--fg-muted)',
+                  fontSize: 13, fontWeight: active ? 600 : 400,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+              >
+                {active && <span style={{ marginRight: 5, fontSize: 11 }}>✓</span>}
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Search row */}
@@ -231,6 +272,19 @@ export default function AccountAudit() {
 
       {result && audit && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* Selected reasons summary */}
+          {reasons.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#1d4ed8', whiteSpace: 'nowrap' }}>Audit reason:</span>
+              {reasons.map(id => {
+                const r = AUDIT_REASONS.find(x => x.id === id);
+                return r ? (
+                  <span key={id} style={{ fontSize: 12, background: '#dbeafe', color: '#1e40af', borderRadius: 12, padding: '2px 10px', fontWeight: 500 }}>{r.label}</span>
+                ) : null;
+              })}
+            </div>
+          )}
 
           {/* Client header */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
