@@ -1041,13 +1041,41 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
     else if (avg < 3.5) { score -= 8;  }
   }
 
-  // 2. Days since last job — MaidCentral exports this as "Last Job"
+  // 4. Frequency — used to adjust job-gap thresholds below
+  const freq = (cust['Frequency'] || cust['frequency'] || '').toLowerCase();
+  // Estimate cycle length in days from frequency string
+  let cycleDays = 14; // default: every 2 weeks
+  if      (freq.includes('every 4') || freq.includes('month')) cycleDays = 28;
+  else if (freq.includes('every 3') || freq.includes('3 week')) cycleDays = 21;
+  else if (freq.includes('bi') || freq.includes('every 2'))    cycleDays = 14;
+  else if (freq.includes('week') && !freq.includes('every'))   cycleDays = 7;
+  else if (freq.includes('one-time'))                          cycleDays = 999; // one-timers skip gap scoring
+
+  // 6. Pending jobs — used to adjust job-gap severity
+  const pending = parseInt(cust['Pending Jobs'] || '0', 10);
+
+  // 2. Days since last job — penalize gap relative to client's own cycle
   const lastJob = cust['Last Job'] || cust['Last Job Date'] || cust['last_job'];
   const daysJob = daysSince(lastJob);
-  if (daysJob !== null) {
-    if (daysJob > 90)       { score -= 25; signals.push(`No job in ${daysJob} days`); }
-    else if (daysJob > 45)  { score -= 12; signals.push(`No job in ${daysJob} days`); }
-    else if (daysJob > 21)  { score -= 5;  }
+  if (daysJob !== null && cycleDays < 999) {
+    // Gap thresholds: 3x cycle = severe, 2x = moderate, 1.5x = mild
+    const severe   = cycleDays * 3;
+    const moderate = cycleDays * 2;
+    const mild     = cycleDays * 1.5;
+
+    // Reduce penalty if they have future jobs booked (they're just delayed, not gone)
+    const pendingFactor = pending >= 4 ? 0 : pending >= 1 ? 0.5 : 1;
+
+    if (daysJob > severe) {
+      const deduct = Math.round(25 * pendingFactor);
+      if (deduct > 0) { score -= deduct; signals.push(`No job in ${daysJob} days (${Math.round(daysJob/cycleDays)}× their cycle)`); }
+    } else if (daysJob > moderate) {
+      const deduct = Math.round(15 * pendingFactor);
+      if (deduct > 0) { score -= deduct; signals.push(`Overdue by ${daysJob - cycleDays} days`); }
+    } else if (daysJob > mild) {
+      const deduct = Math.round(6 * pendingFactor);
+      score -= deduct;
+    }
   }
 
   // 3. Days since last contact — MaidCentral exports as "Last Contact"
@@ -1058,25 +1086,25 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
     else if (daysContact > 30) { score -= 10; }
   }
 
-  // 4. Frequency — monthly/every-4-weeks clients are more at-risk than weekly
-  const freq = (cust['Frequency'] || cust['frequency'] || '').toLowerCase();
-  if (freq.includes('month') || freq.includes('one-time') || freq.includes('every 4')) { score -= 8; }
-  else if (freq.includes('bi') || freq.includes('every 3')) { score -= 3; }
+  // Frequency risk modifier — less frequent = less sticky, slightly higher churn risk
+  if (freq.includes('month') || freq.includes('every 4')) { score -= 6; }
+  else if (freq.includes('bi') || freq.includes('every 3')) { score -= 2; }
+  else if (freq.includes('one-time')) { score -= 5; }
 
-  // 5. Revenue drop signal — Last 12 Revenue much lower than Total Revenue avg suggests declining service
+  // 5. Revenue drop signal — Last 12 Revenue much lower than expected for their frequency
   const total12 = parseFloat((cust['Last 12 Revenue'] || '').toString().replace(/[^0-9.]/g, ''));
   const completedJobs = parseInt(cust['Completed Jobs'] || '0', 10);
   const baseFee = parseFloat((cust['Base Fee'] || '').toString().replace(/[^0-9.]/g, ''));
   if (!isNaN(total12) && !isNaN(baseFee) && baseFee > 0 && completedJobs > 0) {
-    const expectedAnnual = baseFee * 26; // assume every-2-weeks baseline
+    const jobsPerYear = cycleDays < 999 ? Math.round(365 / cycleDays) : 1;
+    const expectedAnnual = baseFee * jobsPerYear;
     if (total12 < expectedAnnual * 0.5) { score -= 10; signals.push('Revenue well below expected'); }
   }
 
-  // 6. Pending jobs = 0 and last job was recent — may have paused or cancelled quietly
-  const pending = parseInt(cust['Pending Jobs'] || '0', 10);
-  if (!isNaN(pending) && pending === 0 && daysJob !== null && daysJob > 14) {
-    score -= 12;
-    if (!signals.find(s => s.includes('job'))) signals.push('No pending jobs scheduled');
+  // 6. No pending jobs = silent churn signal (reduced if they at least had a recent job)
+  if (!isNaN(pending) && pending === 0 && daysJob !== null && daysJob > cycleDays * 0.75) {
+    score -= 15;
+    signals.push('No pending jobs scheduled');
   }
 
   // 7. Previously cancelled (in cancelled CSV)
