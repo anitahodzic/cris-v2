@@ -44,6 +44,15 @@ function ScoreRing({ score }) {
   );
 }
 
+const AUDIT_REASONS = [
+  'CT says it takes too long',
+  'Client complained',
+  'Rate review',
+  'Churn risk',
+  'New CT taking over',
+  'Other',
+];
+
 export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEvalId }) {
   const [search, setSearch] = useState('');
   const [allEvals, setAllEvals] = useState([]);
@@ -54,6 +63,7 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [auditReasons, setAuditReasons] = useState([]);
 
   useEffect(() => {
     api.getEvaluations()
@@ -75,6 +85,7 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
     setSelected(row);
     setDetailLoading(true);
     setDriveInfo(null);
+    setAuditReasons([]);
     try {
       const [data, drive] = await Promise.all([
         api.getEvaluation(row.Evaluation_ID),
@@ -195,6 +206,31 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
                   Full Report →
                 </button>
               )}
+            </div>
+
+            {/* Audit reason chips */}
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 18px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>Why are you running this?</span>
+                <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>pick all that apply</span>
+              </div>
+              <div style={{ padding: '14px 18px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {AUDIT_REASONS.map(r => {
+                  const active = auditReasons.includes(r);
+                  return (
+                    <button key={r} onClick={() => setAuditReasons(prev => active ? prev.filter(x => x !== r) : [...prev, r])}
+                      style={{
+                        padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        border: active ? '2px solid #2563eb' : '1.5px solid #e2e8f0',
+                        background: active ? '#eff6ff' : '#fff',
+                        color: active ? '#1d4ed8' : '#64748b',
+                        transition: 'all 0.12s',
+                      }}>
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* MaidCentral data */}
