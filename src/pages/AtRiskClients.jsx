@@ -38,7 +38,8 @@ function TierDot({ tier }) {
 }
 
 function ScoreBar({ score }) {
-  const color = score <= 40 ? '#dc2626' : score <= 65 ? '#d97706' : score <= 80 ? '#16a34a' : '#2563eb';
+  // Higher score = more risky (matches Excel model)
+  const color = score >= 60 ? '#dc2626' : score >= 30 ? '#d97706' : '#2563eb';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <div style={{ flex: 1, height: 6, background: '#f1f5f9', borderRadius: 99 }}>
@@ -182,26 +183,162 @@ function CheckInHistory({ client, checkIns }) {
   );
 }
 
+// ─── L2 Ticket Modal ─────────────────────────────────────────────────────────
+function L2TicketModal({ client, currentUser, onSave, onClose }) {
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const mcUrl = `https://app.maidcentral.com/`;
+
+  const handleCreate = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${BASE}/api/l2-tickets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: client.name,
+          risk_score: client.risk_score,
+          tier: client.effective_tier || client.risk_tier,
+          risk_reason: client.signals?.[0] || client.top_signal || '',
+          created_by: currentUser?.username || 'CRIS',
+          mc_ticket_id: '',
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Save failed');
+      onSave();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tier = client.effective_tier || client.risk_tier;
+  const s = TIER_STYLE[tier] || TIER_STYLE.Medium;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 500, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', background: '#fff7ed' }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>🎫 Create L2 Ticket in MaidCentral</h3>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
+            {client.name} · <span style={{ fontWeight: 700, color: s.color }}>{tier} Risk</span> · Score {client.risk_score}
+          </p>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Risk signals summary */}
+          {client.signals?.length > 0 && (
+            <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#92400e', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Risk Signals</div>
+              {client.signals.map((sig, i) => (
+                <div key={i} style={{ fontSize: 13, color: '#78350f' }}>⚠ {sig}</div>
+              ))}
+            </div>
+          )}
+          {/* Instructions */}
+          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#0369a1', lineHeight: 1.6 }}>
+            <strong>Step 1:</strong> Click the button below to open MaidCentral.<br/>
+            <strong>Step 2:</strong> Create an L2 ticket for <strong>{client.name}</strong>.<br/>
+            <strong>Step 3:</strong> Click <em>"Log & Save"</em> below to record this ticket in CRIS.
+          </div>
+          <a href={mcUrl} target="_blank" rel="noopener noreferrer"
+            style={{ display: 'block', textAlign: 'center', padding: '10px 20px', background: 'linear-gradient(135deg,#059669,#10b981)', color: '#fff', borderRadius: 10, fontSize: 14, fontWeight: 700, textDecoration: 'none' }}>
+            → Open MaidCentral
+          </a>
+          {err && <p style={{ fontSize: 13, color: '#dc2626', margin: 0 }}>{err}</p>}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ padding: '9px 18px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, fontWeight: 600, color: '#64748b', background: '#fff', cursor: 'pointer' }}>
+            Cancel
+          </button>
+          <button onClick={handleCreate} disabled={saving}
+            style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: saving ? '#94a3b8' : 'linear-gradient(135deg,#d97706,#f59e0b)', cursor: saving ? 'default' : 'pointer' }}>
+            {saving ? 'Saving…' : '✓ Log & Save Ticket'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── L2 Ticket Log panel ─────────────────────────────────────────────────────
+function L2TicketLog({ tickets, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 640, maxHeight: '80vh', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>🎫 L2 Ticket Log</h3>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>{tickets.length} ticket{tickets.length !== 1 ? 's' : ''} created</p>
+          </div>
+          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 20, color: '#64748b', cursor: 'pointer', lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ overflowY: 'auto', flex: 1, padding: '12px 24px 20px' }}>
+          {tickets.length === 0 ? (
+            <p style={{ textAlign: 'center', color: '#94a3b8', padding: '32px 0', fontSize: 14 }}>No L2 tickets logged yet.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
+                  {['Date', 'Client', 'Score', 'Tier', 'Risk Reason', 'By'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...tickets].reverse().map((t, i) => {
+                  const s = TIER_STYLE[t.tier] || { bg: '#f8fafc', color: '#64748b' };
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
+                      <td style={{ padding: '9px 10px', color: '#64748b', whiteSpace: 'nowrap' }}>{t.date}</td>
+                      <td style={{ padding: '9px 10px', fontWeight: 600, color: '#0f172a' }}>{t.client_name}</td>
+                      <td style={{ padding: '9px 10px', fontWeight: 700, color: '#374151' }}>{t.risk_score}</td>
+                      <td style={{ padding: '9px 10px' }}>
+                        <span style={{ background: s.bg, color: s.color, borderRadius: 20, padding: '2px 9px', fontSize: 11, fontWeight: 700 }}>{t.tier}</span>
+                      </td>
+                      <td style={{ padding: '9px 10px', color: '#64748b' }}>{t.risk_reason}</td>
+                      <td style={{ padding: '9px 10px', color: '#94a3b8' }}>{t.created_by}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AtRiskClients({ currentUser }) {
   const [scanData, setScanData] = useState(null);
   const [checkIns, setCheckIns] = useState([]);
+  const [l2Tickets, setL2Tickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('High');
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [modalClient, setModalClient] = useState(null);
+  const [l2ModalClient, setL2ModalClient] = useState(null);
+  const [showL2Log, setShowL2Log] = useState(false);
   const [localCheckIns, setLocalCheckIns] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [scan, ci] = await Promise.all([
+      const [scan, ci, l2] = await Promise.all([
         fetch(`${BASE}/api/risk-scan`).then(r => r.json()),
         fetch(`${BASE}/api/check-ins`).then(r => r.json()).catch(() => []),
+        fetch(`${BASE}/api/l2-tickets`).then(r => r.json()).catch(() => ({ tickets: [] })),
       ]);
       setScanData(scan);
       setCheckIns(Array.isArray(ci) ? ci : []);
+      setL2Tickets(l2.tickets || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -243,8 +380,16 @@ export default function AtRiskClients({ currentUser }) {
   const handleCheckInSaved = (client, saved) => {
     setLocalCheckIns(prev => ({ ...prev, [client.name]: true }));
     setModalClient(null);
-    load(); // reload to get new data
+    load();
   };
+
+  const handleL2Saved = () => {
+    setL2ModalClient(null);
+    load(); // reload to refresh ticket log
+  };
+
+  const hasL2Ticket = (clientName) =>
+    l2Tickets.some(t => t.client_name?.toLowerCase() === clientName?.toLowerCase());
 
   if (loading) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
@@ -257,17 +402,23 @@ export default function AtRiskClients({ currentUser }) {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '28px 20px 48px' }}>
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: '#0f172a', margin: 0 }}>Proactive Risk Tracker</h1>
-        <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 14 }}>
-          Track check-ins with at-risk clients and measure tier movement over time.
-          {scanData?.excluded_in_pipeline ? ` (${scanData.excluded_in_pipeline} clients already in evaluation pipeline excluded)` : ''}
-        </p>
-        {scanData?.scan_date && (
-          <p style={{ color: '#94a3b8', margin: '3px 0 0', fontSize: 12 }}>
-            Last scanned: {new Date(scanData.scan_date).toLocaleString()}
+      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: '#0f172a', margin: 0 }}>Proactive Risk Tracker</h1>
+          <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 14 }}>
+            Track check-ins with at-risk clients and measure tier movement over time.
+            {scanData?.excluded_in_pipeline ? ` (${scanData.excluded_in_pipeline} clients already in evaluation pipeline excluded)` : ''}
           </p>
-        )}
+          {scanData?.scan_date && (
+            <p style={{ color: '#94a3b8', margin: '3px 0 0', fontSize: 12 }}>
+              Last scanned: {new Date(scanData.scan_date).toLocaleString()}
+            </p>
+          )}
+        </div>
+        <button onClick={() => setShowL2Log(true)}
+          style={{ padding: '9px 16px', border: '1.5px solid #d97706', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#92400e', background: '#fffbeb', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+          🎫 L2 Ticket Log {l2Tickets.length > 0 && <span style={{ background: '#d97706', color: '#fff', borderRadius: 20, padding: '1px 7px', fontSize: 11 }}>{l2Tickets.length}</span>}
+        </button>
       </div>
 
       {/* Summary tiles */}
@@ -372,12 +523,27 @@ export default function AtRiskClients({ currentUser }) {
                     )}
                     <ScoreBar score={client.risk_score} />
                   </div>
-                  {/* Right: action */}
-                  <button
-                    onClick={e => { e.stopPropagation(); setModalClient(client); }}
-                    style={{ padding: '6px 14px', background: 'linear-gradient(135deg,#1d4ed8,#2563eb)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    + Check-In
-                  </button>
+                  {/* Right: actions */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); setModalClient(client); }}
+                      style={{ padding: '6px 14px', background: 'linear-gradient(135deg,#1d4ed8,#2563eb)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      + Check-In
+                    </button>
+                    {(tier === 'High' || tier === 'Medium') && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setL2ModalClient(client); }}
+                        style={{
+                          padding: '6px 14px',
+                          background: hasL2Ticket(client.name) ? '#f0fdf4' : 'linear-gradient(135deg,#d97706,#f59e0b)',
+                          color: hasL2Ticket(client.name) ? '#16a34a' : '#fff',
+                          border: hasL2Ticket(client.name) ? '1px solid #86efac' : 'none',
+                          borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}>
+                        {hasL2Ticket(client.name) ? '✓ L2 Created' : '🎫 L2 Ticket'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Expanded: check-in history */}
@@ -400,6 +566,24 @@ export default function AtRiskClients({ currentUser }) {
           currentUser={currentUser}
           onSave={(saved) => handleCheckInSaved(modalClient, saved)}
           onClose={() => setModalClient(null)}
+        />
+      )}
+
+      {/* L2 Ticket modal */}
+      {l2ModalClient && (
+        <L2TicketModal
+          client={l2ModalClient}
+          currentUser={currentUser}
+          onSave={handleL2Saved}
+          onClose={() => setL2ModalClient(null)}
+        />
+      )}
+
+      {/* L2 Ticket log */}
+      {showL2Log && (
+        <L2TicketLog
+          tickets={l2Tickets}
+          onClose={() => setShowL2Log(false)}
         />
       )}
     </div>

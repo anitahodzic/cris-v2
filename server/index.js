@@ -1029,98 +1029,54 @@ function custFullName(cust) {
   return [first, last].filter(Boolean).join(' ');
 }
 
+// ─── Scoring model — mirrors the At_risk_Clients.xlsx formula exactly ────────
+// Score = noSCPart + avgPart + badPart + gapPart, capped at 100
+//   noSCPart : 40 if no scorecards in last 90d, else 0
+//   avgPart  : MAX(0, MIN(40, (4 - avgScore90d) * 10))  — only when scorecard exists
+//   badPart  : MIN(20, badStatusCount90d * 10)
+//   gapPart  : MIN(20, MAX(0, (daysSinceLastClosedJob - 28) / 2))
+// Bad status = Skipped, Lock Out, Cancelled, Moved (non-holiday) — bumps excluded
+// Tiers: ≥60 = High, ≥30 = Medium, <30 = Very Low
 function scoreClient(cust, scorecardRow, cancelledNames) {
-  let score = 100;
   const signals = [];
 
-  // 1. Scorecard average (0-4 scale) — lower avg = higher risk
-  const avg = parseFloat(scorecardRow?.avg_scorecard || scorecardRow?.['Avg Scorecard'] || -1);
-  if (avg >= 0) {
-    if (avg < 2.5)      { score -= 30; signals.push(`Low scorecard avg (${avg.toFixed(1)}/4)`); }
-    else if (avg < 3.0) { score -= 18; signals.push(`Below-avg scorecard (${avg.toFixed(1)}/4)`); }
-    else if (avg < 3.5) { score -= 8;  }
+  // 1. Scorecard component
+  const avgRaw = scorecardRow?.avg_scorecard ?? scorecardRow?.['Avg Scorecard'] ?? null;
+  const avg = avgRaw !== null && avgRaw !== '' ? parseFloat(avgRaw) : null;
+  const noSC = (avg === null || isNaN(avg));
+  const noSCPart = noSC ? 40 : 0;
+  const avgPart  = noSC ? 0 : Math.max(0, Math.min(40, (4 - avg) * 10));
+
+  if (noSC) {
+    signals.push('No scorecards (90d)');
+  } else if (avg < 3) {
+    signals.push(`Low score avg (${avg.toFixed(2)})`);
   }
 
-  // 4. Frequency — used to adjust job-gap thresholds below
-  const freq = (cust['Frequency'] || cust['frequency'] || '').toLowerCase();
-  // Estimate cycle length in days from frequency string
-  let cycleDays = 14; // default: every 2 weeks
-  if      (freq.includes('every 4') || freq.includes('month')) cycleDays = 28;
-  else if (freq.includes('every 3') || freq.includes('3 week')) cycleDays = 21;
-  else if (freq.includes('bi') || freq.includes('every 2'))    cycleDays = 14;
-  else if (freq.includes('week') && !freq.includes('every'))   cycleDays = 7;
-  else if (freq.includes('one-time'))                          cycleDays = 999; // one-timers skip gap scoring
+  // 2. Bad status count (comes from Drive CSV export; field name varies)
+  const badCount = parseInt(
+    cust['Bad Status Count'] || cust['bad_status_count'] || cust['Bad Status'] || '0', 10
+  ) || 0;
+  const badPart = Math.min(20, badCount * 10);
+  if (badCount > 0) signals.push(`${badCount} bad status (90d)`);
 
-  // 6. Pending jobs — used to adjust job-gap severity
-  const pending = parseInt(cust['Pending Jobs'] || '0', 10);
-
-  // 2. Days since last job — penalize gap relative to client's own cycle
-  const lastJob = cust['Last Job'] || cust['Last Job Date'] || cust['last_job'];
+  // 3. Days since last closed job (gap component)
+  const lastJob = cust['Last Job'] || cust['Last Job Date'] || cust['last_job'] || '';
   const daysJob = daysSince(lastJob);
-  if (daysJob !== null && cycleDays < 999) {
-    // Gap thresholds: 3x cycle = severe, 2x = moderate, 1.5x = mild
-    const severe   = cycleDays * 3;
-    const moderate = cycleDays * 2;
-    const mild     = cycleDays * 1.5;
+  const gapPart = daysJob !== null ? Math.min(20, Math.max(0, (daysJob - 28) / 2)) : 0;
+  if (daysJob !== null && daysJob >= 35) signals.push(`Long gap (${daysJob} days)`);
 
-    // Reduce penalty if they have future jobs booked (they're just delayed, not gone)
-    const pendingFactor = pending >= 4 ? 0 : pending >= 1 ? 0.5 : 1;
-
-    if (daysJob > severe) {
-      const deduct = Math.round(25 * pendingFactor);
-      if (deduct > 0) { score -= deduct; signals.push(`No job in ${daysJob} days (${Math.round(daysJob/cycleDays)}× their cycle)`); }
-    } else if (daysJob > moderate) {
-      const deduct = Math.round(15 * pendingFactor);
-      if (deduct > 0) { score -= deduct; signals.push(`Overdue by ${daysJob - cycleDays} days`); }
-    } else if (daysJob > mild) {
-      const deduct = Math.round(6 * pendingFactor);
-      score -= deduct;
-    }
-  }
-
-  // 3. Days since last contact — MaidCentral exports as "Last Contact"
-  const lastContact = cust['Last Contact'] || cust['Last Contact Date'] || cust['last_contact'];
-  const daysContact = daysSince(lastContact);
-  if (daysContact !== null) {
-    if (daysContact > 60)      { score -= 20; signals.push(`No contact in ${daysContact} days`); }
-    else if (daysContact > 30) { score -= 10; }
-  }
-
-  // Frequency risk modifier — less frequent = less sticky, slightly higher churn risk
-  if (freq.includes('month') || freq.includes('every 4')) { score -= 6; }
-  else if (freq.includes('bi') || freq.includes('every 3')) { score -= 2; }
-  else if (freq.includes('one-time')) { score -= 5; }
-
-  // 5. Revenue drop signal — Last 12 Revenue much lower than expected for their frequency
-  const total12 = parseFloat((cust['Last 12 Revenue'] || '').toString().replace(/[^0-9.]/g, ''));
-  const completedJobs = parseInt(cust['Completed Jobs'] || '0', 10);
-  const baseFee = parseFloat((cust['Base Fee'] || '').toString().replace(/[^0-9.]/g, ''));
-  if (!isNaN(total12) && !isNaN(baseFee) && baseFee > 0 && completedJobs > 0) {
-    const jobsPerYear = cycleDays < 999 ? Math.round(365 / cycleDays) : 1;
-    const expectedAnnual = baseFee * jobsPerYear;
-    if (total12 < expectedAnnual * 0.5) { score -= 10; signals.push('Revenue well below expected'); }
-  }
-
-  // 6. No pending jobs = silent churn signal (reduced if they at least had a recent job)
-  if (!isNaN(pending) && pending === 0 && daysJob !== null && daysJob > cycleDays * 0.75) {
-    score -= 15;
-    signals.push('No pending jobs scheduled');
-  }
-
-  // 7. Previously cancelled (in cancelled CSV)
+  // 4. Previously cancelled — extra context signal (no scoring change, matches sheet)
   if (cancelledNames.has(custFullName(cust).toLowerCase())) {
-    score -= 15;
     signals.push('Previously cancelled');
   }
 
-  // Clamp
-  score = Math.max(5, Math.min(100, Math.round(score)));
+  const score = Math.min(100, Math.round(noSCPart + avgPart + badPart + gapPart));
 
-  // Tier
+  // Tiers match the spreadsheet exactly
   let tier;
-  if (score <= 40)      tier = 'High';
-  else if (score <= 65) tier = 'Medium';
-  else if (score <= 80) tier = 'Low';
+  if      (score >= 60) tier = 'High';
+  else if (score >= 30) tier = 'Medium';
   else                  tier = 'Very Low';
 
   return { score, tier, top_signal: signals[0] || null, signals };
@@ -1377,6 +1333,88 @@ ${contextBlocks.join('\n\n')}
     res.json({ reply });
   } catch (err) {
     console.error('ask-cris error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── L2 Ticket endpoints ──────────────────────────────────────────────────
+// Google Sheet tab: "L2_Tickets"
+// Columns: A=Date, B=Client_Name, C=Risk_Score, D=Tier, E=Risk_Reason, F=Created_By, G=MC_Ticket_ID
+
+const L2_SHEET_NAME = 'L2_Tickets';
+
+async function ensureL2Tab(sheets, spreadsheetId) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = meta.data.sheets.some(s => s.properties.title === L2_SHEET_NAME);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ addSheet: { properties: { title: L2_SHEET_NAME } } }],
+      },
+    });
+    // Add header row
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${L2_SHEET_NAME}!A1:G1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Date', 'Client_Name', 'Risk_Score', 'Tier', 'Risk_Reason', 'Created_By', 'MC_Ticket_ID']] },
+    });
+  }
+}
+
+// GET /api/l2-tickets — list all logged tickets
+app.get('/api/l2-tickets', async (req, res) => {
+  try {
+    const auth   = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureL2Tab(sheets, spreadsheetId);
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${L2_SHEET_NAME}!A2:G`,
+    });
+    const rows = resp.data.values || [];
+    const tickets = rows.map(r => ({
+      date:        r[0] || '',
+      client_name: r[1] || '',
+      risk_score:  r[2] || '',
+      tier:        r[3] || '',
+      risk_reason: r[4] || '',
+      created_by:  r[5] || '',
+      mc_ticket_id: r[6] || '',
+    }));
+    res.json({ tickets });
+  } catch (err) {
+    console.error('l2-tickets GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/l2-tickets — log a new L2 ticket
+app.post('/api/l2-tickets', async (req, res) => {
+  try {
+    const { client_name, risk_score, tier, risk_reason, created_by, mc_ticket_id } = req.body;
+    if (!client_name) return res.status(400).json({ error: 'client_name required' });
+
+    const auth   = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureL2Tab(sheets, spreadsheetId);
+
+    const date = new Date().toLocaleDateString('en-US');
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${L2_SHEET_NAME}!A:G`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [[date, client_name, risk_score || '', tier || '', risk_reason || '', created_by || '', mc_ticket_id || '']],
+      },
+    });
+    res.json({ ok: true, date, client_name });
+  } catch (err) {
+    console.error('l2-tickets POST error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
