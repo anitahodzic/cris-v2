@@ -165,7 +165,7 @@ app.get('/api/debug/drive', async (req, res) => {
       results._wide_csv_search = { error: e.message };
     }
 
-    for (const [label, folderId] of [['customers', DRIVE_FOLDER_CUSTOMERS], ['cancelled', DRIVE_FOLDER_CANCELLED]]) {
+    for (const [label, folderId] of [['customers', DRIVE_FOLDER_CUSTOMERS], ['cancelled', DRIVE_FOLDER_CANCELLED], ['scorecards', DRIVE_FOLDER_SCORECARDS], ['employee_stats', DRIVE_FOLDER_EMPLOYEE_STATS]]) {
       try {
         const list = await drive.files.list({
           q: `'${folderId}' in parents and trashed=false`,
@@ -197,10 +197,23 @@ app.get('/api/debug/sheets', async (req, res) => {
     const sheets = await getSheets();
     const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties.title' });
     const tabs = meta.data.sheets.map(s => s.properties.title);
-    // Also count rows in Client_Intake
+    // Count rows and check technician data presence
     let intakeCount = 0;
-    try { const rows = await readTab(sheets, 'Client_Intake'); intakeCount = rows.length; } catch {}
-    res.json({ tabs, intakeCount });
+    let intakeHeaders = [];
+    let techDataCount = 0;
+    let sampleRow = null;
+    try {
+      const rows = await readTab(sheets, 'Client_Intake');
+      intakeCount = rows.length;
+      if (rows.length > 0) {
+        intakeHeaders = Object.keys(rows[0]);
+        techDataCount = rows.filter(r => r.Technician_History_Paste?.trim()).length;
+        // Find a row with tech data to show as sample
+        sampleRow = rows.find(r => r.Technician_History_Paste?.trim()) || null;
+        if (sampleRow) sampleRow = { Evaluation_ID: sampleRow.Evaluation_ID, Client_Name: sampleRow.Client_Name, tech_preview: sampleRow.Technician_History_Paste?.slice(0, 200) };
+      }
+    } catch (e) { intakeHeaders = ['error: ' + e.message]; }
+    res.json({ tabs, intakeCount, intakeHeaders, techDataCount, sampleRow });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
