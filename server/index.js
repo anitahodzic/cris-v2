@@ -956,6 +956,227 @@ You MUST return ONLY valid JSON matching this exact schema, with no markdown fen
   }
 });
 
+// ─── Risk Scan — proactive scoring of ALL Drive customers ─────────────────
+const riskScanCache = { ts: 0, data: null };
+
+function parseDateField(str) {
+  if (!str) return null;
+  // handles MM/DD/YYYY, YYYY-MM-DD, and similar
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function daysSince(dateStr) {
+  const d = parseDateField(dateStr);
+  if (!d) return null;
+  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function scoreClient(cust, scorecardRow, cancelledNames) {
+  let score = 100;
+  const signals = [];
+
+  // 1. Scorecard average (0-4 scale) — lower avg = higher risk
+  const avg = parseFloat(scorecardRow?.avg_scorecard || scorecardRow?.['Avg Scorecard'] || -1);
+  if (avg >= 0) {
+    if (avg < 2.5)      { score -= 30; signals.push(`Low scorecard avg (${avg.toFixed(1)}/4)`); }
+    else if (avg < 3.0) { score -= 18; signals.push(`Below-avg scorecard (${avg.toFixed(1)}/4)`); }
+    else if (avg < 3.5) { score -= 8;  }
+  }
+
+  // 2. Days since last job
+  const lastJob = cust['Last Job Date'] || cust['last_job'] || cust['Last Job'];
+  const daysJob = daysSince(lastJob);
+  if (daysJob !== null) {
+    if (daysJob > 90)       { score -= 25; signals.push(`No job in ${daysJob} days`); }
+    else if (daysJob > 45)  { score -= 12; signals.push(`No job in ${daysJob} days`); }
+    else if (daysJob > 21)  { score -= 5;  }
+  }
+
+  // 3. Days since last contact
+  const lastContact = cust['Last Contact Date'] || cust['last_contact'] || cust['Last Contact'];
+  const daysContact = daysSince(lastContact);
+  if (daysContact !== null) {
+    if (daysContact > 60)      { score -= 20; if (!signals.length || !signals[0].includes('contact')) signals.push(`No contact in ${daysContact} days`); }
+    else if (daysContact > 30) { score -= 10; }
+  }
+
+  // 4. Frequency — monthly clients are more at-risk than weekly
+  const freq = (cust['Frequency'] || cust['frequency'] || '').toLowerCase();
+  if (freq.includes('month') || freq.includes('one-time'))  { score -= 8; }
+  else if (freq.includes('bi') || freq.includes('every 3')) { score -= 3; }
+
+  // 5. Previously cancelled (in cancelled CSV)
+  if (cancelledNames.has((cust['Customer Name'] || cust['name'] || '').trim().toLowerCase())) {
+    score -= 15;
+    signals.push('Previously cancelled');
+  }
+
+  // Clamp
+  score = Math.max(5, Math.min(100, Math.round(score)));
+
+  // Tier
+  let tier;
+  if (score <= 40)      tier = 'High';
+  else if (score <= 65) tier = 'Medium';
+  else if (score <= 80) tier = 'Low';
+  else                  tier = 'Very Low';
+
+  return { score, tier, top_signal: signals[0] || null };
+}
+
+app.get('/api/risk-scan', async (req, res) => {
+  try {
+    const now = Date.now();
+    if (riskScanCache.data && now - riskScanCache.ts < 5 * 60 * 1000) {
+      return res.json(riskScanCache.data);
+    }
+
+    // Load all three datasets in parallel
+    const [custData, cancelledData, scorecardData] = await Promise.all([
+      cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+      cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
+      cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
+    ]);
+
+    const customers = custData.rows || [];
+    const cancelled = cancelledData.rows || [];
+    const scorecards = scorecardData.rows || [];
+
+    // Build cancelled name set for quick lookup
+    const cancelledNames = new Set(
+      cancelled.map(r => (r['Customer Name'] || r['name'] || '').trim().toLowerCase())
+    );
+
+    // Build scorecard map: customer name → row
+    const scorecardMap = {};
+    for (const row of scorecards) {
+      const name = (row['Customer Name'] || row['name'] || '').trim().toLowerCase();
+      if (name) scorecardMap[name] = row;
+    }
+
+    // Score every customer
+    const clients = customers
+      .filter(c => {
+        const name = (c['Customer Name'] || c['name'] || '').trim();
+        return name.length > 0;
+      })
+      .map(cust => {
+        const name = (cust['Customer Name'] || cust['name'] || '').trim();
+        const nameLow = name.toLowerCase();
+        const scorecardRow = scorecardMap[nameLow] || null;
+        const { score, tier, top_signal } = scoreClient(cust, scorecardRow, cancelledNames);
+        return {
+          name,
+          frequency: cust['Frequency'] || cust['frequency'] || '',
+          last_job: cust['Last Job Date'] || cust['last_job'] || '',
+          last_contact: cust['Last Contact Date'] || cust['last_contact'] || '',
+          avg_scorecard: scorecardRow ? (scorecardRow['avg_scorecard'] || scorecardRow['Avg Scorecard'] || null) : null,
+          risk_score: score,
+          risk_tier: tier,
+          top_signal,
+        };
+      })
+      .sort((a, b) => a.risk_score - b.risk_score);
+
+    const high_risk   = clients.filter(c => c.risk_score <= 40).length;
+    const medium_risk = clients.filter(c => c.risk_score > 40 && c.risk_score <= 65).length;
+    const very_low    = clients.filter(c => c.risk_score > 80).length;
+
+    const result = {
+      total_clients: clients.length,
+      high_risk,
+      medium_risk,
+      very_low_risk: very_low,
+      scan_date: new Date().toISOString(),
+      customers_file: custData.filename,
+      clients,
+    };
+
+    riskScanCache.ts   = now;
+    riskScanCache.data = result;
+
+    res.json(result);
+  } catch (err) {
+    console.error('risk-scan error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Ask CRIS — AI chat with real Drive + Sheets context ─────────────────
+app.post('/api/ask-cris', async (req, res) => {
+  try {
+    const { messages = [], question } = req.body;
+
+    // Load Drive data for context (use cache)
+    let contextBlocks = [];
+    try {
+      const [custData, cancelledData, scorecardData] = await Promise.all([
+        cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+        cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
+        cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
+      ]);
+
+      const customers  = (custData.rows  || []).slice(0, 400); // cap for token budget
+      const cancelled  = (cancelledData.rows  || []).slice(0, 200);
+      const scorecards = (scorecardData.rows || []).slice(0, 400);
+
+      if (customers.length)  contextBlocks.push(`## Current Customers (${customers.length} rows)\n${JSON.stringify(customers, null, 0).slice(0, 40000)}`);
+      if (cancelled.length)  contextBlocks.push(`## Cancelled Customers (${cancelled.length} rows)\n${JSON.stringify(cancelled, null, 0).slice(0, 20000)}`);
+      if (scorecards.length) contextBlocks.push(`## Scorecard Averages (${scorecards.length} rows)\n${JSON.stringify(scorecards, null, 0).slice(0, 20000)}`);
+    } catch (driveErr) {
+      console.warn('ask-cris: Drive data unavailable:', driveErr.message);
+      contextBlocks.push('## Note\nDrive data could not be loaded at this time. Answering from general knowledge.');
+    }
+
+    // Also pull Sheets data (Programs, Policies, Settings) if available
+    try {
+      const sheets = await getSheets();
+      const [programs, policies] = await Promise.all([
+        readTab(sheets, 'Programs').catch(() => []),
+        readTab(sheets, 'Policies').catch(() => []),
+      ]);
+      if (programs.length) contextBlocks.push(`## Programs\n${JSON.stringify(programs, null, 0)}`);
+      if (policies.length) contextBlocks.push(`## Retention Policies\n${JSON.stringify(policies, null, 0)}`);
+    } catch (_) { /* Sheets optional */ }
+
+    const systemPrompt = `You are CRIS — Client Retention Intelligence System — the AI assistant for BA House Cleaning (BAHC). You have access to real, live client data pulled directly from MaidCentral via Google Drive. Answer questions about clients, cancellation trends, revenue, risk, and retention strategies.
+
+Be concise, specific, and actionable. When citing data, reference client names and numbers directly. Format answers with clear structure (short paragraphs, bullet points for lists). If asked about a specific client, pull their exact data. If asked about trends, compute counts/averages from the data.
+
+Today's date: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
+
+--- LIVE DATA CONTEXT ---
+${contextBlocks.join('\n\n')}
+--- END DATA ---`;
+
+    // Build message history for Claude (last 10 turns for context)
+    const history = (messages || []).slice(-10).map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // Add current question if not already in history
+    const lastMsg = history[history.length - 1];
+    if (!lastMsg || lastMsg.role !== 'user') {
+      history.push({ role: 'user', content: question || 'Hello' });
+    }
+
+    const completion = await anthropic.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: history,
+    });
+
+    const reply = completion.content?.[0]?.text || 'I couldn\'t generate a response.';
+    res.json({ reply });
+  } catch (err) {
+    console.error('ask-cris error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Serve React frontend (MUST be last) ──────────────────────────────────
 app.use(express.static(path.join(__dirname, '../build')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../build', 'index.html')));
