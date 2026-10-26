@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../utils/api';
 import { Card, CardHeader, CardBody, Btn, TextArea, Input, Select, Alert, Spinner } from '../components/UI';
 
@@ -14,16 +14,92 @@ const EMPTY = {
   cancellation_reason: '',
 };
 
-async function lookupClient(name) {
-  if (!name || name.length < 2) return null;
+async function searchClients(q) {
+  if (!q || q.length < 2) return [];
   try {
-    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(name)}`);
-    const data = await res.json();
-    const lower = name.toLowerCase();
-    return data.find(d => d.name?.toLowerCase() === lower) || data[0] || null;
+    const res = await fetch(`${BASE}/api/client-lookup?q=${encodeURIComponent(q)}`);
+    return await res.json();
   } catch {
-    return null;
+    return [];
   }
+}
+
+function ClientAutocomplete({ value, onChange, onSelect }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef(null);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleChange = (val) => {
+    onChange(val);
+    clearTimeout(timer.current);
+    if (val.trim().length < 2) { setSuggestions([]); setOpen(false); return; }
+    setLoading(true);
+    timer.current = setTimeout(async () => {
+      const results = await searchClients(val.trim());
+      setSuggestions(results);
+      setOpen(results.length > 0);
+      setLoading(false);
+    }, 300);
+  };
+
+  const handlePick = (client) => {
+    onChange(client.name);
+    setSuggestions([]);
+    setOpen(false);
+    onSelect(client);
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Input
+          value={value}
+          onChange={handleChange}
+          placeholder="Start typing client name…"
+          autoComplete="off"
+        />
+        {loading && (
+          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}>
+            <Spinner size="sm" />
+          </span>
+        )}
+      </div>
+      {open && suggestions.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 1000, left: 0, right: 0, top: '100%',
+          background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', margin: 0, padding: 0,
+          listStyle: 'none', maxHeight: 280, overflowY: 'auto',
+        }}>
+          {suggestions.map((c, i) => (
+            <li
+              key={i}
+              onMouseDown={() => handlePick(c)}
+              style={{
+                padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9',
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+            >
+              <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 14 }}>{c.name}</span>
+              <span style={{ fontSize: 12, color: '#64748b' }}>
+                {c.frequency && `${c.frequency} · `}{c.address}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function DriveProfileCard({ info, loading }) {
@@ -80,8 +156,9 @@ function DriveProfileCard({ info, loading }) {
   );
 }
 
-export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnalysis }) {
-  const [form, setForm] = useState({ ...EMPTY, created_date: new Date().toISOString() });
+export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnalysis, user }) {
+  const staffName = user?.username || user?.name || '';
+  const [form, setForm] = useState({ ...EMPTY, created_date: new Date().toISOString(), staff_name: staffName });
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -89,21 +166,17 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   const [evalId, setEvalId] = useState('');
   const [driveInfo, setDriveInfo] = useState(null);
   const [driveLoading, setDriveLoading] = useState(false);
-  const lookupTimer = useRef(null);
 
   const set = (key) => (val) => setForm(f => ({ ...f, [key]: val }));
 
   const handleClientNameChange = (val) => {
     setForm(f => ({ ...f, client_name: val }));
-    clearTimeout(lookupTimer.current);
     setDriveInfo(null);
-    if (val.trim().length < 3) { setDriveLoading(false); return; }
-    setDriveLoading(true);
-    lookupTimer.current = setTimeout(async () => {
-      const result = await lookupClient(val.trim());
-      setDriveInfo(result);
-      setDriveLoading(false);
-    }, 600);
+  };
+
+  const handleClientSelect = (client) => {
+    setDriveInfo(client);
+    setForm(f => ({ ...f, client_name: client.name }));
   };
 
   const handleSave = async () => {
@@ -181,14 +254,16 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Evaluation Date" value={form.created_date?.split('T')[0]} onChange={(v) => setForm(f => ({ ...f, created_date: v }))} type="date" />
-            <Input label="Staff Member Name" value={form.staff_name} onChange={set('staff_name')} placeholder="Your name" required />
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Staff Member Name <span className="text-red-500">*</span></label>
+              <Input value={form.staff_name} onChange={set('staff_name')} placeholder="Your name" required />
+            </div>
             <div className="sm:col-span-2">
-              <Input
-                label="Client Name"
+              <label className="block text-sm font-medium text-slate-700 mb-1">Client Name <span className="text-red-500">*</span></label>
+              <ClientAutocomplete
                 value={form.client_name}
                 onChange={handleClientNameChange}
-                placeholder="Type client name — profile loads automatically"
-                required
+                onSelect={handleClientSelect}
               />
             </div>
             <Input label="Customer ID (optional)" value={form.customer_id} onChange={set('customer_id')} placeholder="MaidCentral Customer ID" />
