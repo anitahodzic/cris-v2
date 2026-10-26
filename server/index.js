@@ -1063,11 +1063,16 @@ app.get('/api/risk-scan', async (req, res) => {
       return res.json(riskScanCache.data);
     }
 
-    // Load all three datasets independently so one failure doesn't break the whole scan
-    const [custResult2, cancelledResult2, scorecardResult2] = await Promise.allSettled([
+    // Load Drive + Sheets data in parallel — each independently so one failure doesn't break the scan
+    const [custResult2, cancelledResult2, scorecardResult2, sheetsData] = await Promise.allSettled([
       cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
       cachedDriveCSV(DRIVE_FOLDER_CANCELLED),
       cachedDriveCSV(DRIVE_FOLDER_SCORECARDS),
+      // Load active evaluations from Sheets to build the exclusion list
+      getSheets().then(sheets => Promise.all([
+        readTab(sheets, 'Client_Intake'),
+        readTab(sheets, 'Outcomes'),
+      ])).catch(e => { console.warn('risk-scan: sheets load failed (non-fatal):', e.message); return [[], []]; }),
     ]);
 
     if (custResult2.status === 'rejected') {
@@ -1081,6 +1086,20 @@ app.get('/api/risk-scan', async (req, res) => {
     const cancelled = cancelledResult2.status === 'fulfilled' ? (cancelledResult2.value.rows || []) : [];
     const scorecards = scorecardResult2.status === 'fulfilled' ? (scorecardResult2.value.rows || []) : [];
 
+    // Build exclusion sets from Sheets:
+    // - Clients already in Client_Intake with NO outcome = active/open evaluations (these are "reactive" pipeline)
+    // - Clients already in Client_Intake with an outcome = already handled, still exclude from proactive scan
+    const [intakeRows, outcomeRows] = sheetsData.status === 'fulfilled' ? sheetsData.value : [[], []];
+    const intakeClientNames = new Set(intakeRows.map(r => (r.Client_Name || '').trim().toLowerCase()).filter(Boolean));
+    const outcomeClientIds = new Set(outcomeRows.map(r => (r.Evaluation_ID || '').trim()).filter(Boolean));
+    // Active (open) evaluations = in intake but no matching outcome
+    const openEvalNames = new Set(
+      intakeRows
+        .filter(r => !outcomeClientIds.has((r.Evaluation_ID || '').trim()))
+        .map(r => (r.Client_Name || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+
     // Build cancelled name set for quick lookup
     const cancelledNames = new Set(
       cancelled.map(r => (r['Customer Name'] || r['name'] || '').trim().toLowerCase())
@@ -1093,11 +1112,14 @@ app.get('/api/risk-scan', async (req, res) => {
       if (name) scorecardMap[name] = row;
     }
 
-    // Score every customer
+    // Score every customer — exclude those already in the CRIS evaluation pipeline
     const clients = customers
       .filter(c => {
         const name = (c['Customer Name'] || c['name'] || '').trim();
-        return name.length > 0;
+        if (!name) return false;
+        // Exclude clients who already have an open/active CRIS evaluation (reactive pipeline)
+        if (openEvalNames.has(name.toLowerCase())) return false;
+        return true;
       })
       .map(cust => {
         const name = (cust['Customer Name'] || cust['name'] || '').trim();
@@ -1127,7 +1149,7 @@ app.get('/api/risk-scan', async (req, res) => {
       medium_risk,
       very_low_risk: very_low,
       scan_date: new Date().toISOString(),
-      customers_file: custData.filename,
+      excluded_in_pipeline: openEvalNames.size,
       clients,
     };
 
@@ -1137,6 +1159,65 @@ app.get('/api/risk-scan', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('risk-scan error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Check-in log — track proactive outreach to at-risk clients ──────────
+// Stored in a Check_Ins sheet tab: Checkin_ID, Client_Name, Date, Staff_Name,
+// Contact_Method, Notes, Risk_Tier_Before, Risk_Tier_After
+
+const CHECKIN_HEADERS = ['Checkin_ID','Client_Name','Date','Staff_Name','Contact_Method','Notes','Risk_Tier_Before','Risk_Tier_After'];
+
+async function ensureCheckInTab(sheets) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties.title' });
+  const tabs = meta.data.sheets.map(s => s.properties.title);
+  if (!tabs.includes('Check_Ins')) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: 'Check_Ins' } } }] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: 'Check_Ins!A1', valueInputOption: 'RAW', requestBody: { values: [CHECKIN_HEADERS] } });
+  }
+}
+
+// Get all check-ins (optionally filtered by client name)
+app.get('/api/check-ins', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    await ensureCheckInTab(sheets);
+    const rows = await readTab(sheets, 'Check_Ins');
+    const { client } = req.query;
+    const filtered = client
+      ? rows.filter(r => (r.Client_Name || '').toLowerCase() === client.toLowerCase())
+      : rows;
+    res.json(filtered);
+  } catch (err) {
+    console.error('check-ins GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log a new check-in
+app.post('/api/check-ins', async (req, res) => {
+  try {
+    const { client_name, staff_name, contact_method, notes, risk_tier_before, risk_tier_after } = req.body;
+    if (!client_name) return res.status(400).json({ error: 'client_name required' });
+
+    const sheets = await getSheets();
+    await ensureCheckInTab(sheets);
+
+    const checkin_id = `CI-${Date.now()}`;
+    const date = new Date().toISOString().split('T')[0];
+    const row = {
+      Checkin_ID: checkin_id, Client_Name: client_name, Date: date,
+      Staff_Name: staff_name || '', Contact_Method: contact_method || '',
+      Notes: notes || '', Risk_Tier_Before: risk_tier_before || '',
+      Risk_Tier_After: risk_tier_after || '',
+    };
+    await appendRow(sheets, 'Check_Ins', row, CHECKIN_HEADERS);
+    // Invalidate risk scan cache so the page refreshes
+    riskScanCache.ts = 0;
+    res.json({ ok: true, checkin_id });
+  } catch (err) {
+    console.error('check-ins POST error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
