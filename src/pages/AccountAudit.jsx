@@ -10,66 +10,6 @@ async function lookupClient(name) {
   } catch { return []; }
 }
 
-function StatusBadge({ status, reason }) {
-  const map = {
-    'On Track':        { bg: '#f0fdf4', border: '#86efac', text: '#15803d', icon: '✓' },
-    'Needs Attention': { bg: '#fefce8', border: '#fde047', text: '#854d0e', icon: '⚠' },
-    'Urgent':          { bg: '#fef2f2', border: '#fca5a5', text: '#b91c1c', icon: '!' },
-  };
-  const s = map[status] || map['Needs Attention'];
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 12px', borderRadius: 8,
-      background: s.bg, border: `1px solid ${s.border}`, color: s.text,
-      fontSize: 13, fontWeight: 600,
-    }}>
-      <span style={{
-        width: 18, height: 18, borderRadius: '50%', background: s.text, color: '#fff',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 10, fontWeight: 700, flexShrink: 0,
-      }}>{s.icon}</span>
-      {status}
-      {reason && <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.75 }}>— {reason}</span>}
-    </span>
-  );
-}
-
-function SignalCard({ type, headline, detail }) {
-  const borders = { time: '#06b6d4', quality: '#8b5cf6', feedback: '#14b8a6', tech: '#f59e0b' };
-  const labels  = { time: 'Time', quality: 'Quality', feedback: 'Client Feedback', tech: 'Technician' };
-  const colors  = { time: '#0891b2', quality: '#7c3aed', feedback: '#0d9488', tech: '#d97706' };
-  return (
-    <div style={{
-      background: 'var(--card-bg)', border: '1px solid var(--border)',
-      borderLeft: `4px solid ${borders[type]}`, borderRadius: 8,
-      padding: '12px 14px',
-    }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: colors[type], marginBottom: 6 }}>
-        {labels[type]}
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg)', lineHeight: 1.3, marginBottom: headline && detail ? 4 : 0 }}>
-        {headline}
-      </div>
-      {detail && <div style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{detail}</div>}
-    </div>
-  );
-}
-
-function Pill({ label, value }) {
-  if (!value) return null;
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      background: 'var(--pill-bg)', border: '1px solid var(--border)',
-      borderRadius: 20, padding: '2px 10px', fontSize: 12, color: 'var(--fg-muted)',
-    }}>
-      {label && <span style={{ opacity: 0.6 }}>{label}</span>}
-      <strong style={{ color: 'var(--fg)', fontWeight: 600 }}>{value}</strong>
-    </span>
-  );
-}
-
 const AUDIT_REASONS = [
   { id: 'ct_too_long',       label: 'CT says it takes too long' },
   { id: 'client_complained', label: 'Client complained' },
@@ -78,6 +18,26 @@ const AUDIT_REASONS = [
   { id: 'new_ct',            label: 'New CT taking over' },
   { id: 'other',             label: 'Other' },
 ];
+
+function ScoreStars({ score }) {
+  if (score == null) return <span style={{ color: '#9ca3af' }}>—</span>;
+  const n = parseFloat(score);
+  const color = n >= 3.5 ? '#16a34a' : n >= 2.5 ? '#ca8a04' : '#dc2626';
+  return <span style={{ color, fontWeight: 700 }}>{n.toFixed(1)}★</span>;
+}
+
+function VsAllowed({ pct }) {
+  if (pct == null) return <span style={{ color: '#9ca3af' }}>—</span>;
+  const color = Math.abs(pct) <= 5 ? '#16a34a' : pct > 0 ? '#dc2626' : '#ca8a04';
+  const sign = pct > 0 ? '+' : '';
+  return <span style={{ color, fontWeight: 600 }}>{sign}{pct}%</span>;
+}
+
+function Efficiency({ pct }) {
+  if (pct == null) return <span style={{ color: '#9ca3af' }}>—</span>;
+  const color = pct >= 95 ? '#16a34a' : pct >= 85 ? '#ca8a04' : '#dc2626';
+  return <span style={{ color, fontWeight: 600 }}>{pct}%</span>;
+}
 
 export default function AccountAudit() {
   const [query, setQuery]       = useState('');
@@ -88,6 +48,8 @@ export default function AccountAudit() {
   const [error, setError]       = useState('');
   const [result, setResult]     = useState(null);
   const [reasons, setReasons]   = useState([]);
+  const [aiAudit, setAiAudit]   = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const timer = useRef(null);
 
   const toggleReason = (id) =>
@@ -98,6 +60,7 @@ export default function AccountAudit() {
     setResult(null);
     setDriveData(null);
     setError('');
+    setAiAudit(null);
     clearTimeout(timer.current);
     if (val.trim().length < 2) { setSuggs([]); setShowSugg(false); return; }
     timer.current = setTimeout(async () => {
@@ -116,13 +79,9 @@ export default function AccountAudit() {
 
   const runAudit = async () => {
     if (!query.trim()) return;
-    setLoading(true); setError(''); setResult(null);
+    setLoading(true); setError(''); setResult(null); setAiAudit(null);
     try {
-      const res = await fetch(`${BASE}/api/account-audit/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null, audit_reasons: reasons }),
-      });
+      const res = await fetch(`${BASE}/api/client-tech-history?name=${encodeURIComponent(query.trim())}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Audit failed');
       setResult(data);
@@ -133,67 +92,89 @@ export default function AccountAudit() {
     }
   };
 
+  const runAiAudit = async () => {
+    if (!query.trim()) return;
+    setAiLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/account-audit/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null, audit_reasons: reasons }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI audit failed');
+      setAiAudit(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const handleKey = (e) => {
     if (e.key === 'Enter') { setShowSugg(false); runAudit(); }
     if (e.key === 'Escape') setShowSugg(false);
   };
 
-  const { audit, profile, cancellation, client_name } = result || {};
+  const p = result?.profile || driveData;
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 16px' }}>
+    <div style={{ maxWidth: 780, margin: '0 auto', padding: '32px 16px' }}>
       <style>{`
-        :root { --card-bg: #ffffff; --border: #e5e7eb; --fg: #111827; --fg-muted: #6b7280; --pill-bg: #f3f4f6; --sugg-hover: #eff6ff; }
+        :root { --card-bg: #ffffff; --border: #e5e7eb; --fg: #111827; --fg-muted: #6b7280; --pill-bg: #f3f4f6; }
         @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-          --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151; --sugg-hover: #1e3a5f;
+          --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151;
         }}
-        :root[data-theme="dark"] { --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151; --sugg-hover: #1e3a5f; }
-        .audit-btn:hover:not(:disabled) { background: #1d4ed8 !important; }
-        .sugg-row:hover { background: var(--sugg-hover); }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-        .skeleton { animation: pulse 1.5s ease-in-out infinite; background: var(--pill-bg); border-radius: 6px; }
+        :root[data-theme="dark"] { --card-bg: #1f2937; --border: #374151; --fg: #f9fafb; --fg-muted: #9ca3af; --pill-bg: #374151; }
+        .sugg-row:hover { background: #eff6ff; }
+        .run-btn:hover:not(:disabled) { background: #1d4ed8 !important; }
+        .ai-btn:hover:not(:disabled) { background: #5b21b6 !important; }
+        .reason-chip:hover { border-color: #93c5fd !important; }
+        .audit-table { width: 100%; border-collapse: collapse; }
+        .audit-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); }
+        .audit-table td { font-size: 13px; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--fg); vertical-align: middle; }
+        .audit-table tr:last-child td { border-bottom: none; }
+        .audit-table tr:hover td { background: #f9fafb; }
       `}</style>
 
+      {/* Page header */}
       <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--fg)', margin: 0 }}>Customer Account Audit</h1>
-        <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 4, marginBottom: 0 }}>
-          AI-powered account review from MaidCentral data — time, quality, and service signals in seconds.
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--fg)', margin: '0 0 4px' }}>Customer Account Audit</h1>
+        <p style={{ fontSize: 13, color: 'var(--fg-muted)', margin: 0 }}>
+          Is it the house, the CT, or the price? Time by technician, scorecard, and service signals — with a recommendation.
         </p>
       </div>
 
-      {/* Audit reason chips */}
-      <div style={{ marginBottom: 24 }}>
-        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>
-          Why are you running this audit?
-        </label>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {AUDIT_REASONS.map(r => {
-            const active = reasons.includes(r.id);
-            return (
-              <button
-                key={r.id}
-                onClick={() => toggleReason(r.id)}
-                style={{
-                  padding: '6px 14px', borderRadius: 20, border: `1.5px solid ${active ? '#2563eb' : 'var(--border)'}`,
-                  background: active ? '#eff6ff' : 'var(--card-bg)',
+      {/* Input card */}
+      <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 20px 18px', marginBottom: 24 }}>
+        {/* Why running this */}
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>
+            Why are you running this? (pick all that apply)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {AUDIT_REASONS.map(r => {
+              const active = reasons.includes(r.id);
+              return (
+                <button key={r.id} className="reason-chip" onClick={() => toggleReason(r.id)} style={{
+                  padding: '5px 13px', borderRadius: 20,
+                  border: `1.5px solid ${active ? '#3b82f6' : 'var(--border)'}`,
+                  background: active ? '#eff6ff' : 'transparent',
                   color: active ? '#1d4ed8' : 'var(--fg-muted)',
-                  fontSize: 13, fontWeight: active ? 600 : 400,
-                  cursor: 'pointer', transition: 'all 0.15s',
-                }}
-              >
-                {active && <span style={{ marginRight: 5, fontSize: 11 }}>✓</span>}
-                {r.label}
-              </button>
-            );
-          })}
+                  fontSize: 12, fontWeight: active ? 600 : 400, cursor: 'pointer',
+                  transition: 'all 0.12s',
+                }}>
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      {/* Search row */}
-      <div style={{ marginBottom: 32 }}>
-        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 6 }}>
-          Client Name
-        </label>
+        {/* Client search */}
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 6 }}>
+          Client
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <input
@@ -202,13 +183,12 @@ export default function AccountAudit() {
               onChange={e => handleChange(e.target.value)}
               onKeyDown={handleKey}
               onBlur={() => setTimeout(() => setShowSugg(false), 150)}
-              placeholder="Type to search clients…"
+              placeholder="Type client name…"
               style={{
                 width: '100%', boxSizing: 'border-box',
-                border: '1px solid var(--border)', borderRadius: 8,
-                padding: '10px 12px', fontSize: 14,
-                background: 'var(--card-bg)', color: 'var(--fg)',
-                outline: 'none',
+                border: '1.5px solid var(--border)', borderRadius: 8,
+                padding: '9px 12px', fontSize: 14,
+                background: 'var(--card-bg)', color: 'var(--fg)', outline: 'none',
               }}
               autoComplete="off"
             />
@@ -236,20 +216,26 @@ export default function AccountAudit() {
               </div>
             )}
           </div>
-          <button
-            className="audit-btn"
-            onClick={runAudit}
-            disabled={loading || !query.trim()}
-            style={{
-              padding: '10px 20px', borderRadius: 8, border: 'none',
-              background: '#2563eb', color: '#fff', fontSize: 13, fontWeight: 600,
-              cursor: loading || !query.trim() ? 'not-allowed' : 'pointer',
-              opacity: loading || !query.trim() ? 0.5 : 1,
-              whiteSpace: 'nowrap', transition: 'background 0.15s',
-            }}
-          >
-            {loading ? 'Running…' : '⊙ Run Audit'}
+          <button className="run-btn" onClick={runAudit} disabled={loading || !query.trim()} style={{
+            padding: '9px 20px', borderRadius: 8, border: 'none',
+            background: '#2563eb', color: '#fff', fontSize: 13, fontWeight: 700,
+            cursor: loading || !query.trim() ? 'not-allowed' : 'pointer',
+            opacity: loading || !query.trim() ? 0.55 : 1, whiteSpace: 'nowrap',
+            transition: 'background 0.15s',
+          }}>
+            {loading ? 'Loading…' : 'Run audit'}
           </button>
+          {result && (
+            <button className="ai-btn" onClick={runAiAudit} disabled={aiLoading} style={{
+              padding: '9px 16px', borderRadius: 8, border: 'none',
+              background: '#6d28d9', color: '#fff', fontSize: 13, fontWeight: 700,
+              cursor: aiLoading ? 'not-allowed' : 'pointer',
+              opacity: aiLoading ? 0.55 : 1, whiteSpace: 'nowrap',
+              transition: 'background 0.15s',
+            }}>
+              {aiLoading ? '✦ Thinking…' : '✦ AI Deep Dive'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -260,118 +246,170 @@ export default function AccountAudit() {
       )}
 
       {loading && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="skeleton" style={{ height: 28, width: 200 }} />
-          <div className="skeleton" style={{ height: 16, width: '100%' }} />
-          <div className="skeleton" style={{ height: 16, width: '80%' }} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
-            {[1,2,3,4].map(i => <div key={i} className="skeleton" style={{ height: 80 }} />)}
-          </div>
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-muted)' }}>
+          <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.5 }}>⊙</div>
+          <p style={{ margin: 0, fontSize: 14 }}>Loading visit history…</p>
         </div>
       )}
 
-      {result && audit && (
+      {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* Selected reasons summary */}
-          {reasons.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#1d4ed8', whiteSpace: 'nowrap' }}>Audit reason:</span>
-              {reasons.map(id => {
-                const r = AUDIT_REASONS.find(x => x.id === id);
-                return r ? (
-                  <span key={id} style={{ fontSize: 12, background: '#dbeafe', color: '#1e40af', borderRadius: 12, padding: '2px 10px', fontWeight: 500 }}>{r.label}</span>
-                ) : null;
-              })}
+          {/* Client header — matches Scheduling Assistant style */}
+          <div>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: 'var(--fg)', margin: '0 0 4px' }}>{result.client_name}</h2>
+            <div style={{ fontSize: 13, color: '#2563eb', lineHeight: 1.6 }}>
+              {[
+                p?.area,
+                p?.frequency || driveData?.frequency,
+                p?.service_type || driveData?.scope,
+                p?.default_team ? `default team ${p.default_team}` : null,
+                result.total_visits ? `${result.total_visits} completed visits` : null,
+              ].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+
+          {/* Recommendation box */}
+          {result.recommendations?.length > 0 && (
+            <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '14px 18px' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#0369a1', marginBottom: 8 }}>
+                Recommendation
+              </div>
+              <ol style={{ margin: 0, paddingLeft: 20 }}>
+                {result.recommendations.map((rec, i) => (
+                  <li key={i} style={{ fontSize: 14, color: '#0c4a6e', lineHeight: 1.55 }}>
+                    <strong style={{ fontWeight: 700 }}>{rec.split('.')[0]}.</strong>
+                    {rec.includes('.') ? ' ' + rec.split('.').slice(1).join('.').trim() : ''}
+                  </li>
+                ))}
+              </ol>
             </div>
           )}
 
-          {/* Client header */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div>
-              <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fg)', margin: '0 0 8px' }}>{client_name}</h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {profile?.address && <Pill label="📍" value={profile.address} />}
-                {profile?.phone && <Pill label="📞" value={profile.phone} />}
-                {profile?.frequency && <Pill value={profile.frequency} />}
-                {profile?.base_fee && <Pill label="$" value={`${profile.base_fee}/visit`} />}
-                {profile?.customer_start && <Pill label="Since" value={profile.customer_start} />}
-                {profile?.completed_jobs && <Pill label="Jobs" value={profile.completed_jobs} />}
-                {profile?.total_revenue && <Pill label="Revenue" value={`$${Number(profile.total_revenue).toLocaleString()}`} />}
-                {profile?.avg_scorecard && <Pill label="Avg Score" value={profile.avg_scorecard} />}
-                {profile?.last_job && <Pill label="Last Job" value={profile.last_job} />}
+          {/* Time by Technician table */}
+          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>Time by technician</div>
+            </div>
+            {result.techs?.length > 0 ? (
+              <>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="audit-table">
+                    <thead>
+                      <tr>
+                        <th>CT</th>
+                        <th style={{ textAlign: 'center' }}>Visits</th>
+                        {result.techs.some(t => t.has_hours) && (
+                          <>
+                            <th style={{ textAlign: 'center' }}>vs allowed</th>
+                            <th style={{ textAlign: 'center' }}>Their overall efficiency</th>
+                          </>
+                        )}
+                        <th style={{ textAlign: 'center' }}>Client rating</th>
+                        <th>Last</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.techs.map((t, i) => (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 600 }}>{t.tech}</td>
+                          <td style={{ textAlign: 'center' }}>{t.visits}</td>
+                          {result.techs.some(x => x.has_hours) && (
+                            <>
+                              <td style={{ textAlign: 'center' }}><VsAllowed pct={t.pct_vs_allowed} /></td>
+                              <td style={{ textAlign: 'center' }}><Efficiency pct={t.efficiency} /></td>
+                            </>
+                          )}
+                          <td style={{ textAlign: 'center' }}><ScoreStars score={t.avg_scorecard} /></td>
+                          <td style={{ color: 'var(--fg-muted)', fontSize: 12 }}>{t.last_date || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--fg-muted)', borderTop: '1px solid var(--border)' }}>
+                  {result.techs.some(t => t.has_hours)
+                    ? 'Efficiency = allowed ÷ actual; 100% = on time. A CT over here but fine elsewhere points to scope at this house; over everywhere points at the CT.'
+                    : 'Hours vs allowed not available — dispatch board does not include hour data for this client.'}
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 14 }}>
+                <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📋</div>
+                No visit history found in dispatch board for <strong>{result.client_name}</strong>.
+                <br /><span style={{ fontSize: 12 }}>This client may not appear in the current dispatch export.</span>
               </div>
-              {cancellation && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626', fontWeight: 500 }}>
-                  ⚠ Previously cancelled{cancellation.date ? ` — ${cancellation.date}` : ''}
-                  {cancellation.reason ? ` · ${cancellation.reason}` : ''}
+            )}
+          </div>
+
+          {/* Client profile pills */}
+          {(p || driveData) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {[
+                driveData?.address && { label: '📍', value: driveData.address },
+                driveData?.phone && { label: '📞', value: driveData.phone },
+                (p?.base_fee || driveData?.base_fee) && { label: '$', value: `${p?.base_fee || driveData?.base_fee}/visit` },
+                (p?.customer_start || driveData?.customer_start) && { label: 'Since', value: p?.customer_start || driveData?.customer_start },
+                (p?.completed_jobs || driveData?.completed_jobs) && { label: 'Jobs', value: p?.completed_jobs || driveData?.completed_jobs },
+                driveData?.total_revenue && { label: 'Revenue', value: `$${Number(driveData.total_revenue).toLocaleString()}` },
+                result.avg_scorecard && { label: 'Avg Score', value: `${result.avg_scorecard.toFixed(1)}★` },
+              ].filter(Boolean).map((pill, i) => (
+                <span key={i} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: 'var(--pill-bg)', border: '1px solid var(--border)',
+                  borderRadius: 20, padding: '3px 10px', fontSize: 12, color: 'var(--fg-muted)',
+                }}>
+                  <span style={{ opacity: 0.6 }}>{pill.label}</span>
+                  <strong style={{ color: 'var(--fg)', fontWeight: 600 }}>{pill.value}</strong>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* AI Deep Dive result */}
+          {aiAudit && (
+            <div style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 10, padding: '18px' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7c3aed', marginBottom: 12 }}>
+                ✦ AI Deep Dive — {aiAudit.audit?.status}
+              </div>
+              {aiAudit.audit?.summary && (
+                <p style={{ margin: '0 0 12px', fontSize: 14, color: '#1e1b4b', lineHeight: 1.65 }}>{aiAudit.audit.summary}</p>
+              )}
+              {aiAudit.audit?.signals && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 12 }}>
+                  {Object.entries(aiAudit.audit.signals).map(([type, sig]) => sig && (
+                    <div key={type} style={{
+                      background: '#fff', border: '1px solid #e9d5ff',
+                      borderLeft: `4px solid ${type === 'time' ? '#06b6d4' : type === 'quality' ? '#8b5cf6' : type === 'feedback' ? '#14b8a6' : '#f59e0b'}`,
+                      borderRadius: 8, padding: '10px 12px',
+                    }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#7c3aed', marginBottom: 4 }}>
+                        {type}
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 3 }}>{sig.headline}</div>
+                      {sig.detail && <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5 }}>{sig.detail}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {aiAudit.audit?.recommendation?.action && (
+                <div style={{ background: '#ede9fe', borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#5b21b6', marginBottom: 4 }}>AI Recommendation</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1e1b4b' }}>{aiAudit.audit.recommendation.action}</div>
+                  {aiAudit.audit.recommendation.why && (
+                    <div style={{ fontSize: 12, color: '#6d28d9', marginTop: 4 }}>{aiAudit.audit.recommendation.why}</div>
+                  )}
                 </div>
               )}
             </div>
-            <StatusBadge status={audit.status} reason={audit.status_reason} />
-          </div>
-
-          {/* Summary */}
-          <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '14px 16px' }}>
-            <p style={{ margin: 0, fontSize: 14, color: '#1e3a5f', lineHeight: 1.65 }}>{audit.summary}</p>
-            {audit.review_window && (
-              <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>{audit.review_window}</p>
-            )}
-          </div>
-
-          {/* Signal grid */}
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 10 }}>Key Signals</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
-              {['time','quality','feedback','tech'].map(type => {
-                const sig = audit.signals?.[type];
-                if (!sig) return null;
-                return <SignalCard key={type} type={type} headline={sig.headline} detail={sig.detail} />;
-              })}
-            </div>
-          </div>
-
-          {/* Recommendation + Next step */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-            {audit.recommendation && (
-              <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>Recommendation</div>
-                <p style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: 'var(--fg)', lineHeight: 1.4 }}>
-                  {audit.recommendation.action}
-                </p>
-                {audit.recommendation.why && (
-                  <p style={{ margin: 0, fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
-                    <strong style={{ color: 'var(--fg)' }}>Why: </strong>{audit.recommendation.why}
-                    {audit.recommendation.evidence_count && (
-                      <span style={{ color: 'var(--fg-muted)', marginLeft: 4 }}>({audit.recommendation.evidence_count})</span>
-                    )}
-                  </p>
-                )}
-              </div>
-            )}
-            {audit.next_step && (
-              <div style={{ background: 'var(--pill-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-muted)', marginBottom: 8 }}>Next Step</div>
-                <p style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--fg)', lineHeight: 1.4 }}>{audit.next_step.action}</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {audit.next_step.owner && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Owner: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.owner}</strong></div>}
-                  {audit.next_step.due && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Due: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.due}</strong></div>}
-                  {audit.next_step.review_point && <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Review: <strong style={{ color: 'var(--fg)' }}>{audit.next_step.review_point}</strong></div>}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ fontSize: 11, color: 'var(--fg-muted)', textAlign: 'center', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-            Audit generated from MaidCentral Drive export · Aggregate data only · Per-visit detail not available
-          </div>
+          )}
         </div>
       )}
 
       {!result && !loading && !error && (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--fg-muted)' }}>
           <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>⊙</div>
-          <p style={{ fontWeight: 600, color: 'var(--fg)', margin: '0 0 4px' }}>Search for a client and run an audit</p>
+          <p style={{ fontWeight: 700, color: 'var(--fg)', margin: '0 0 4px', fontSize: 15 }}>Search for a client and run an audit</p>
           <p style={{ fontSize: 13, margin: 0 }}>CRIS pulls MaidCentral data automatically — no copy-paste needed</p>
         </div>
       )}

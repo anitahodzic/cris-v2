@@ -865,6 +865,122 @@ app.get('/api/technician-report', async (req, res) => {
   }
 });
 
+// ─── Client Tech History (for Account Audit table) ────────────────────────
+// GET /api/client-tech-history?name=<client name>
+// Returns per-technician visit breakdown from dispatch board + scorecard data
+app.get('/api/client-tech-history', async (req, res) => {
+  try {
+    const name = (req.query.name || '').trim().toLowerCase();
+    if (!name) return res.status(400).json({ error: 'name required' });
+
+    const [dispatchResult, custResult] = await Promise.all([
+      cachedDriveCSV(DRIVE_FOLDER_DISPATCH_BOARD),
+      cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS),
+    ]);
+
+    const dispatchRows = dispatchResult.rows || [];
+    const custRows = custResult.rows || [];
+
+    // Match client from customers CSV
+    const profile = custRows.find(r => {
+      const full = `${r.First || ''} ${r.Last || ''}`.trim().toLowerCase();
+      return full === name || full.includes(name) || name.includes(full);
+    });
+
+    // Filter dispatch rows for this client
+    const clientRows = dispatchRows.filter(r => {
+      const customer = (r['Customer'] || '').replace(/\*$/, '').trim().toLowerCase();
+      return customer === name || customer.includes(name) || name.includes(customer);
+    });
+
+    // Parse allowed vs actual hours if available
+    // Dispatch board may have "Allowed" and "Actual" columns
+    const byTech = {};
+    for (const row of clientRows) {
+      const tech = (row['Team'] || row['Technician'] || '').trim();
+      if (!tech) continue;
+      const scorecard = row['Scorecard'] != null && row['Scorecard'] !== '' ? parseFloat(row['Scorecard']) : null;
+      const scheduledStr = row['Scheduled'] || '';
+      const datePart = scheduledStr.split(' ')[0];
+      const allowed = row['Allowed'] != null && row['Allowed'] !== '' ? parseFloat(row['Allowed']) : null;
+      const actual = row['Actual'] != null && row['Actual'] !== '' ? parseFloat(row['Actual']) : null;
+      const status = (row['Status'] || '').toLowerCase();
+      if (status === 'cancelled' || status === 'client cancelled') continue; // skip cancelled visits
+
+      if (!byTech[tech]) byTech[tech] = { tech, visits: 0, scorecards: [], last_date: null, allowed_total: 0, actual_total: 0, has_hours: false };
+      byTech[tech].visits++;
+      if (scorecard != null) byTech[tech].scorecards.push(scorecard);
+      if (datePart) {
+        const d = new Date(datePart);
+        if (!byTech[tech].last_date || d > new Date(byTech[tech].last_date)) byTech[tech].last_date = datePart;
+      }
+      if (allowed != null) { byTech[tech].allowed_total += allowed; byTech[tech].has_hours = true; }
+      if (actual != null) { byTech[tech].actual_total += actual; byTech[tech].has_hours = true; }
+    }
+
+    const techs = Object.values(byTech).map(t => {
+      const avg_scorecard = t.scorecards.length ? (t.scorecards.reduce((s, v) => s + v, 0) / t.scorecards.length) : null;
+      const efficiency = t.has_hours && t.allowed_total > 0
+        ? Math.round((t.allowed_total / t.actual_total) * 100)
+        : null;
+      const pct_vs_allowed = t.has_hours && t.allowed_total > 0 && t.actual_total > 0
+        ? Math.round(((t.actual_total - t.allowed_total) / t.allowed_total) * 100)
+        : null;
+      return {
+        tech: t.tech,
+        visits: t.visits,
+        avg_scorecard: avg_scorecard != null ? Math.round(avg_scorecard * 10) / 10 : null,
+        last_date: t.last_date,
+        efficiency,
+        pct_vs_allowed,
+        has_hours: t.has_hours,
+      };
+    }).sort((a, b) => b.visits - a.visits);
+
+    const totalVisits = clientRows.length;
+    const allScorecards = clientRows.map(r => r['Scorecard']).filter(v => v != null && v !== '').map(Number);
+    const avgOverall = allScorecards.length ? (allScorecards.reduce((s, v) => s + v, 0) / allScorecards.length) : null;
+
+    // Recommendation logic
+    let recommendations = [];
+    if (techs.length === 0) {
+      recommendations.push('No visit history found in dispatch board for this client.');
+    } else {
+      const primaryTech = techs[0];
+      if (primaryTech.avg_scorecard != null && primaryTech.avg_scorecard < 3.0) {
+        recommendations.push(`${primaryTech.tech} has an average scorecard of ${primaryTech.avg_scorecard.toFixed(1)} — consider a different technician.`);
+      }
+      if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed > 10) {
+        recommendations.push(`${primaryTech.tech} is running ${primaryTech.pct_vs_allowed}% over allowed time — scope or rate review recommended.`);
+      } else if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed < -10) {
+        recommendations.push(`${primaryTech.tech} is finishing ${Math.abs(primaryTech.pct_vs_allowed)}% under allowed time — verify quality or adjust rate.`);
+      }
+      if (recommendations.length === 0) {
+        const within = primaryTech.pct_vs_allowed != null ? ` Recent actual is within ${Math.abs(primaryTech.pct_vs_allowed)}% of allowed.` : '';
+        recommendations.push(`No change to hours or rate.${within}`);
+      }
+    }
+
+    res.json({
+      client_name: profile ? `${profile.First || ''} ${profile.Last || ''}`.trim() : req.query.name,
+      profile: profile ? {
+        area: profile['Area'] || profile['Zone'] || profile['Region'] || null,
+        frequency: profile['Frequency'] || null,
+        service_type: profile['Scope of Work'] || profile['Service Type'] || null,
+        default_team: profile['Default Team(s)'] || profile['Team'] || null,
+        base_fee: profile['Base Fee'] || null,
+        customer_start: profile['Customer Start'] || null,
+        completed_jobs: profile['Completed Jobs'] || null,
+      } : null,
+      techs,
+      total_visits: totalVisits,
+      avg_scorecard: avgOverall != null ? Math.round(avgOverall * 100) / 100 : null,
+      recommendations,
+      has_dispatch_data: clientRows.length > 0,
+    });
+  } catch (err) { console.error('client-tech-history error:', err.message); res.status(500).json({ error: err.message }); }
+});
+
 // ─── Customer Account Audit (AI-powered) ──────────────────────────────────
 // POST /api/account-audit/run
 // Body: { client_name, drive_data? }
