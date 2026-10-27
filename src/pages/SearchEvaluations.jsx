@@ -224,8 +224,8 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Search Evaluations</h1>
-        <p className="text-gray-500 mt-1">Find evaluations by client, staff, status, or date range.</p>
+        <h1 className="text-2xl font-bold text-gray-900">Search Cancellation Requests</h1>
+        <p className="text-gray-500 mt-1">Find cancellation requests by client, staff, status, or date range.</p>
       </div>
 
       {/* Filters */}

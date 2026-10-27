@@ -32,8 +32,8 @@ function Section({ title, description, children }) {
   );
 }
 
-export default function Settings({ currentUser, isAdmin }) {
-  const [tab, setTab] = useState('settings');
+export default function Settings({ currentUser, isAdmin, initialTab }) {
+  const [tab, setTab] = useState(initialTab || 'settings');
   const [settings, setSettings] = useState([]);
   const [programs, setPrograms] = useState([]);
   const [policies, setPolicies] = useState([]);

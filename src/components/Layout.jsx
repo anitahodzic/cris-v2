@@ -4,33 +4,31 @@ const NAV_GROUPS = [
   {
     label: 'WORKSPACE',
     items: [
-      { id: 'dashboard',       label: 'Dashboard',        icon: '⊞' },
-      { id: 'new-evaluation',  label: 'New Evaluation',   icon: '+' },
-      { id: 'search',          label: 'Search',           icon: '⌕' },
-      { id: 'ai-chat',         label: 'Ask CRIS',         icon: '✦' },
+      { id: 'dashboard',       label: 'Dashboard',              icon: '⊞' },
+      { id: 'new-evaluation',  label: 'Cancellation Request',   icon: '+' },
+      { id: 'search',          label: 'Search',                 icon: '⌕' },
+      { id: 'ai-chat',         label: 'Ask CRIS',               icon: '✦' },
     ],
   },
   {
     label: 'CLIENT HEALTH',
     items: [
-      { id: 'at-risk',         label: 'At-Risk Clients',  icon: '⚠' },
-      { id: 'account-audit',   label: 'Account Audit',    icon: '◎' },
+      { id: 'at-risk',         label: 'At-Risk Clients',        icon: '⚠' },
+      { id: 'account-audit',   label: 'Account Audit',          icon: '◎' },
     ],
   },
   {
     label: 'REPORTS',
     items: [
-      { id: 'customer-report', label: 'Client Report',    icon: '⊙' },
-      { id: 'monthly-report',  label: 'Monthly Report',   icon: '↑' },
-      { id: 'tech-report',     label: 'Tech Report',      icon: '👷' },
+      { id: 'customer-report', label: 'Client Report',          icon: '⊙' },
+      { id: 'monthly-report',  label: 'Monthly Report',         icon: '↑' },
+      { id: 'tech-report',     label: 'Tech Report',            icon: '👷' },
     ],
   },
   {
     label: 'CONFIGURE',
     items: [
-      { id: 'programs',        label: 'Programs',         icon: '⊟' },
-      { id: 'policies',        label: 'Policies',         icon: '⊠' },
-      { id: 'settings',        label: 'Settings',         icon: '⚙', adminOnly: true },
+      { id: 'settings',        label: 'Settings',               icon: '⚙', adminOnly: true },
     ],
   },
 ];

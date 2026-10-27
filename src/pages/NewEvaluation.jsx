@@ -4,6 +4,8 @@ import { Card, CardHeader, CardBody, Btn, TextArea, Input, Select, Alert, Spinne
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
+// Page is now called "Cancellation Request" in the nav
+
 const EMPTY = {
   evaluation_id: '',
   staff_name: '',
@@ -238,7 +240,7 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-32">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">New Client Evaluation</h1>
+        <h1 className="text-2xl font-bold text-gray-900">New Cancellation Request</h1>
         <p className="text-gray-500 mt-1">Enter the client name and cancellation reason — CRIS pulls the rest from MaidCentral automatically.</p>
         {evalId && <p className="text-xs text-blue-600 mt-2 font-mono">Evaluation ID: {evalId}</p>}
       </div>

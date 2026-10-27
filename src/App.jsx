@@ -6,8 +6,7 @@ import NewEvaluation from './pages/NewEvaluation';
 import Report from './pages/Report';
 import SearchEvaluations from './pages/SearchEvaluations';
 import CustomerReport from './pages/CustomerReport';
-import Programs from './pages/Programs';
-import Policies from './pages/Policies';
+// Programs and Policies are now tabs inside Settings
 import Settings from './pages/Settings';
 import MonthlyReport from './pages/MonthlyReport';
 import AiChat from './pages/AiChat';
@@ -54,8 +53,8 @@ export default function App() {
       case 'report':          return <Report {...commonProps} />;
       case 'search':          return <SearchEvaluations {...commonProps} />;
       case 'customer-report': return <CustomerReport {...commonProps} />;
-      case 'programs':        return <Programs />;
-      case 'policies':        return <Policies />;
+      case 'programs':        return <Settings currentUser={currentUser} isAdmin={isAdmin} initialTab="programs" />;
+      case 'policies':        return <Settings currentUser={currentUser} isAdmin={isAdmin} initialTab="policies" />;
       case 'settings':        return <Settings currentUser={currentUser} isAdmin={isAdmin} />;
       case 'monthly-report':  return <MonthlyReport />;
       case 'ai-chat':         return <AiChat currentUser={currentUser} />;
