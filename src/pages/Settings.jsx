@@ -32,11 +32,21 @@ function Section({ title, description, children }) {
   );
 }
 
+const DEFAULT_HOLIDAYS = [
+  { Holiday_Name: 'Thanksgiving',     Date: '', Active: 'Yes' },
+  { Holiday_Name: 'Christmas Day',    Date: '', Active: 'Yes' },
+  { Holiday_Name: "New Year's Day",   Date: '', Active: 'Yes' },
+  { Holiday_Name: 'Memorial Day',     Date: '', Active: 'Yes' },
+  { Holiday_Name: 'Independence Day', Date: '', Active: 'Yes' },
+  { Holiday_Name: 'Labor Day',        Date: '', Active: 'Yes' },
+];
+
 export default function Settings({ currentUser, isAdmin, initialTab }) {
   const [tab, setTab] = useState(initialTab || 'settings');
   const [settings, setSettings] = useState([]);
   const [programs, setPrograms] = useState([]);
   const [policies, setPolicies] = useState([]);
+  const [holidays, setHolidays] = useState(DEFAULT_HOLIDAYS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState('');
@@ -48,10 +58,12 @@ export default function Settings({ currentUser, isAdmin, initialTab }) {
       apiGet('/settings'),
       apiGet('/programs'),
       apiGet('/policies'),
-    ]).then(([s, p, pol]) => {
+      apiGet('/holidays').catch(() => []),
+    ]).then(([s, p, pol, hol]) => {
       setSettings(s);
       setPrograms(p);
       setPolicies(pol);
+      setHolidays(hol.length > 0 ? hol : DEFAULT_HOLIDAYS);
       setLoading(false);
     }).catch(e => {
       setError(e.message);
@@ -83,6 +95,18 @@ export default function Settings({ currentUser, isAdmin, initialTab }) {
     setPolicies(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   };
 
+  const handleHolidayChange = (idx, field, value) => {
+    setHolidays(prev => prev.map((h, i) => i === idx ? { ...h, [field]: value } : h));
+  };
+
+  const addHoliday = () => {
+    setHolidays(prev => [...prev, { Holiday_Name: '', Date: '', Active: 'Yes' }]);
+  };
+
+  const removeHoliday = (idx) => {
+    setHolidays(prev => prev.filter((_, i) => i !== idx));
+  };
+
   const saveAll = async () => {
     setSaving(true);
     setError('');
@@ -90,6 +114,7 @@ export default function Settings({ currentUser, isAdmin, initialTab }) {
       if (tab === 'settings') await apiPost('/settings/save', { rows: settings });
       if (tab === 'programs') await apiPost('/programs/save', { rows: programs });
       if (tab === 'policies') await apiPost('/policies/save', { rows: policies });
+      if (tab === 'holidays') await apiPost('/holidays/save', { rows: holidays });
       setSaved('Saved!');
       setTimeout(() => setSaved(''), 3000);
     } catch (e) {
@@ -102,6 +127,7 @@ export default function Settings({ currentUser, isAdmin, initialTab }) {
     { id: 'settings', label: 'Settings' },
     { id: 'programs', label: 'Programs' },
     { id: 'policies', label: 'Policies' },
+    { id: 'holidays', label: '🗓 Holidays' },
   ];
 
   if (loading) return (
@@ -228,6 +254,59 @@ export default function Settings({ currentUser, isAdmin, initialTab }) {
               </div>
             ))}
           </div>
+        </Section>
+      )}
+
+      {tab === 'holidays' && (
+        <Section title="Ignored Holidays" description="Skips or cancellations on these dates won't count against a client's risk score.">
+          <div className="space-y-3">
+            <div className="grid grid-cols-12 gap-2 mb-1 px-1">
+              <div className="col-span-5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Holiday Name</div>
+              <div className="col-span-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date (optional)</div>
+              <div className="col-span-2 text-xs font-semibold text-gray-400 uppercase tracking-wide text-center">Active</div>
+              <div className="col-span-1" />
+            </div>
+            {holidays.map((h, idx) => (
+              <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                <input
+                  className="col-span-5 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. Thanksgiving"
+                  value={h.Holiday_Name || ''}
+                  onChange={e => handleHolidayChange(idx, 'Holiday_Name', e.target.value)}
+                />
+                <input
+                  className="col-span-4 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. Nov 28, 2024"
+                  value={h.Date || ''}
+                  onChange={e => handleHolidayChange(idx, 'Date', e.target.value)}
+                />
+                <div className="col-span-2 flex justify-center">
+                  <input
+                    type="checkbox"
+                    checked={h.Active === 'Yes' || h.Active === 'TRUE' || h.Active === '1' || h.Active === true}
+                    onChange={e => handleHolidayChange(idx, 'Active', e.target.checked ? 'Yes' : 'No')}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                </div>
+                <div className="col-span-1 flex justify-center">
+                  <button
+                    onClick={() => removeHoliday(idx)}
+                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                    title="Remove"
+                  >×</button>
+                </div>
+              </div>
+            ))}
+            <button
+              onClick={addHoliday}
+              className="mt-3 flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              <span className="text-lg leading-none">+</span> Add Holiday
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-4">
+            The <strong>Date</strong> field is optional — use it for year-specific dates. Leave blank for recurring annual holidays. Active holidays are passed to the AI when analyzing cancellation requests.
+          </p>
         </Section>
       )}
     </div>

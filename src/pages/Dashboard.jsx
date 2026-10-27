@@ -61,8 +61,8 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
   }, []);
 
   const topAtRisk = (riskData?.clients || [])
-    .filter(c => c.risk_score <= 65)
-    .sort((a, b) => a.risk_score - b.risk_score)
+    .filter(c => c.risk_score >= 40)
+    .sort((a, b) => b.risk_score - a.risk_score)
     .slice(0, 8);
 
   const hour = new Date().getHours();
@@ -99,9 +99,10 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
         <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 mt-6">Proactive Risk Scan — All Active Clients</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Total Clients" value={riskData?.total_clients} sub="active in MaidCentral" color="blue" icon="👥" loading={riskLoading} />
-          <StatCard label="High Risk" value={riskData?.high_risk} sub="score ≤ 40" color="red" icon="🚨" loading={riskLoading} />
-          <StatCard label="Medium Risk" value={riskData?.medium_risk} sub="score 41–65" color="yellow" icon="⚠️" loading={riskLoading} />
-          <StatCard label="Very Low Risk" value={riskData?.very_low_risk} sub="score > 80" color="green" icon="⭐" loading={riskLoading} />
+          <StatCard label="High Risk" value={riskData?.high_risk} sub="no scorecards or 2+ skips" color="red" icon="🚨" loading={riskLoading} />
+          <StatCard label="Medium Risk" value={riskData?.medium_risk} sub="occasional skips or low feedback" color="yellow" icon="⚠️" loading={riskLoading} />
+          <StatCard label="Low Risk" value={riskData?.low_risk} sub="minor gaps or infrequent issues" color="orange" icon="📋" loading={riskLoading} />
+          <StatCard label="Very Low Risk" value={riskData?.very_low_risk} sub="consistent feedback & attendance" color="green" icon="⭐" loading={riskLoading} />
         </div>
       </div>
 
@@ -149,9 +150,9 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
                         </td>
                         <td className="px-3 py-3 text-center">
                           <span className={`inline-block text-lg font-extrabold ${
-                            client.risk_score <= 30 ? 'text-red-600' :
-                            client.risk_score <= 50 ? 'text-orange-500' :
-                            client.risk_score <= 65 ? 'text-yellow-600' : 'text-green-600'
+                            client.risk_score >= 60 ? 'text-red-600' :
+                            client.risk_score >= 40 ? 'text-orange-500' :
+                            client.risk_score >= 20 ? 'text-yellow-600' : 'text-green-600'
                           }`}>
                             {client.risk_score}
                           </span>

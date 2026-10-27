@@ -502,6 +502,31 @@ app.post('/api/policies/save', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/holidays', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const rows = await readTab(sheets, 'Holidays').catch(() => []);
+    res.json(rows);
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/holidays/save', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const { rows } = req.body;
+    const headers = ['Holiday_Name', 'Date', 'Active'];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: 'Holidays',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [headers, ...rows.map(r => [r.Holiday_Name ?? '', r.Date ?? '', r.Active ?? 'Yes'])] },
+    });
+    // Bust risk-scan cache so scoring reloads holiday list next run
+    riskScanCache.data = null;
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 // ─── Drive CSV Routes ──────────────────────────────────────────────────────
 
 // Client lookup: search by name across current-customers and cancelled-service CSVs
@@ -1029,9 +1054,10 @@ function custFullName(cust) {
   return [first, last].filter(Boolean).join(' ');
 }
 
-// ─── Scoring model — mirrors the At_risk_Clients.xlsx formula exactly ────────
+// ─── Scoring model ────────────────────────────────────────────────────────────
 // Score = noSCPart + avgPart + badPart + gapPart, capped at 100
-//   noSCPart : 40 if no scorecards in last 90d, else 0
+//   noSCPart : 60 if no scorecards in last 90d, else 0
+//              (no scorecards alone = High tier, per tier definitions)
 //   avgPart  : MAX(0, MIN(40, (4 - avgScore90d) * 10))  — only when scorecard exists
 //   badPart  : MIN(20, badStatusCount90d * 10)
 //   gapPart  : MIN(20, MAX(0, (daysSinceLastClosedJob - 28) / 2))
@@ -1044,7 +1070,7 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
   const avgRaw = scorecardRow?.avg_scorecard ?? scorecardRow?.['Avg Scorecard'] ?? null;
   const avg = avgRaw !== null && avgRaw !== '' ? parseFloat(avgRaw) : null;
   const noSC = (avg === null || isNaN(avg));
-  const noSCPart = noSC ? 40 : 0;
+  const noSCPart = noSC ? 60 : 0;  // 60 so no-scorecard alone = High (≥60)
   const avgPart  = noSC ? 0 : Math.max(0, Math.min(40, (4 - avg) * 10));
 
   if (noSC) {
@@ -1190,14 +1216,18 @@ app.get('/api/risk-scan', async (req, res) => {
       })
       .sort((a, b) => a.risk_score - b.risk_score);
 
-    const high_risk   = clients.filter(c => c.risk_score <= 40).length;
-    const medium_risk = clients.filter(c => c.risk_score > 40 && c.risk_score <= 65).length;
-    const very_low    = clients.filter(c => c.risk_score > 80).length;
+    // Tiers (risk-UP scale: higher score = more risk)
+    // ≥60 = High, ≥40 = Medium, ≥20 = Low, <20 = Very Low
+    const high_risk   = clients.filter(c => c.risk_score >= 60).length;
+    const medium_risk = clients.filter(c => c.risk_score >= 40 && c.risk_score < 60).length;
+    const low_risk    = clients.filter(c => c.risk_score >= 20 && c.risk_score < 40).length;
+    const very_low    = clients.filter(c => c.risk_score < 20).length;
 
     const result = {
       total_clients: clients.length,
       high_risk,
       medium_risk,
+      low_risk,
       very_low_risk: very_low,
       scan_date: new Date().toISOString(),
       excluded_in_pipeline: openEvalNames.size,
