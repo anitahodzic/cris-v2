@@ -1036,7 +1036,7 @@ function custFullName(cust) {
 //   badPart  : MIN(20, badStatusCount90d * 10)
 //   gapPart  : MIN(20, MAX(0, (daysSinceLastClosedJob - 28) / 2))
 // Bad status = Skipped, Lock Out, Cancelled, Moved (non-holiday) — bumps excluded
-// Tiers: ≥60 = High, ≥30 = Medium, <30 = Very Low
+// Tiers: ≥60 = High, ≥40 = Medium, ≥20 = Low, <20 = Very Low
 function scoreClient(cust, scorecardRow, cancelledNames) {
   const signals = [];
 
@@ -1073,10 +1073,11 @@ function scoreClient(cust, scorecardRow, cancelledNames) {
 
   const score = Math.min(100, Math.round(noSCPart + avgPart + badPart + gapPart));
 
-  // Tiers match the spreadsheet exactly
+  // Tiers
   let tier;
   if      (score >= 60) tier = 'High';
-  else if (score >= 30) tier = 'Medium';
+  else if (score >= 40) tier = 'Medium';
+  else if (score >= 20) tier = 'Low';
   else                  tier = 'Very Low';
 
   return { score, tier, top_signal: signals[0] || null, signals };
