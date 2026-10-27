@@ -32,7 +32,7 @@ const DRIVE_FOLDER_EMPLOYEE_STATS      = '1-TmXhQ0jCWnVVxyfq32F2p0shkUrgySL';
 const DRIVE_FOLDER_JOBSTATUS           = '1wyRb22hbuNG16Is8qqs6Evexe_Wu5Y-V';
 const DRIVE_FOLDER_JOBSTATUS_HIST      = '1e4yTfJOP4XL5wO8foWNAx48eY5kEK6uU';
 const DRIVE_FOLDER_PTO                 = '1cU-wNPWLlHlhsLrwNmynxojRGFvgwCFs';
-const DRIVE_FOLDER_SCORECARDS          = '1xWuY9y1lb19zAzIqi9bcSWx5p1wdjHUJ';
+const DRIVE_FOLDER_SCORECARDS          = '1xWuY9y1lb19zAzlqi9bcSWx5p1wdjHUJ';
 const DRIVE_FOLDER_SCORECARDS_HIST     = '15sr5ToKyp2rTzvkvAPOlwvZJF8m8cMJA';
 
 function getAuth(scopes) {
@@ -1131,11 +1131,30 @@ app.get('/api/risk-scan', async (req, res) => {
       cancelled.map(r => custFullName(r).toLowerCase()).filter(Boolean)
     );
 
-    // Build scorecard map: customer name → row
-    const scorecardMap = {};
+    // Build scorecard map: customer name → { avg_scorecard, count_90d }
+    // Scorecard CSV has individual survey rows: Customer, Job Date, Response ("4 - We're Thrilled…")
+    // We compute the 90-day average per customer here.
+    const cutoff90 = new Date();
+    cutoff90.setDate(cutoff90.getDate() - 90);
+    const scorecardBuckets = {}; // name → [scores]
     for (const row of scorecards) {
-      const name = custFullName(row).toLowerCase();
-      if (name) scorecardMap[name] = row;
+      const name = (row['Customer'] || custFullName(row) || '').toLowerCase().trim();
+      if (!name) continue;
+      const jobDate = parseDateField(row['Job Date'] || '');
+      if (!jobDate || jobDate < cutoff90) continue;
+      // Response column: "4 - We're Thrilled - Great Work" → parse leading digit
+      const responseRaw = row['Response'] || '';
+      const scoreMatch = responseRaw.match(/^(\d+)/);
+      if (!scoreMatch) continue;
+      const scoreVal = parseInt(scoreMatch[1], 10);
+      if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 4) continue;
+      if (!scorecardBuckets[name]) scorecardBuckets[name] = [];
+      scorecardBuckets[name].push(scoreVal);
+    }
+    const scorecardMap = {};
+    for (const [name, scores] of Object.entries(scorecardBuckets)) {
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      scorecardMap[name] = { avg_scorecard: avg, count_90d: scores.length };
     }
 
     // Score every customer — exclude those already in the CRIS evaluation pipeline
@@ -1160,7 +1179,8 @@ app.get('/api/risk-scan', async (req, res) => {
           pending_jobs: cust['Pending Jobs'] || '0',
           base_fee: cust['Base Fee'] || '',
           last_12_revenue: cust['Last 12 Revenue'] || '',
-          avg_scorecard: scorecardRow ? (scorecardRow['avg_scorecard'] || scorecardRow['Avg Scorecard'] || null) : null,
+          avg_scorecard: scorecardRow ? scorecardRow.avg_scorecard : null,
+          scorecard_count_90d: scorecardRow ? scorecardRow.count_90d : 0,
           risk_score: score,
           risk_tier: tier,
           top_signal,
