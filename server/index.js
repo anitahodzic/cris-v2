@@ -1470,6 +1470,112 @@ app.post('/api/l2-tickets', async (req, res) => {
   }
 });
 
+// ─── Care Focus Tracking ──────────────────────────────────────────────────────
+// Columns: A=Week_Date, B=Client_Name, C=Risk_Score, D=Tier, E=Risk_Reason,
+//          F=Scheduled_Date, G=Completed, H=Completed_Date, I=Notes, J=Created_By
+
+const CF_SHEET_NAME = 'Care_Focus';
+
+async function ensureCFTab(sheets, spreadsheetId) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = meta.data.sheets.some(s => s.properties.title === CF_SHEET_NAME);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: CF_SHEET_NAME } } }] } });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${CF_SHEET_NAME}!A1:J1`, valueInputOption: 'RAW',
+      requestBody: { values: [['Week_Date','Client_Name','Risk_Score','Tier','Risk_Reason','Scheduled_Date','Completed','Completed_Date','Notes','Created_By']] },
+    });
+  }
+}
+
+// GET /api/care-focus — list all care focus records
+app.get('/api/care-focus', async (req, res) => {
+  try {
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureCFTab(sheets, spreadsheetId);
+    const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${CF_SHEET_NAME}!A2:J` });
+    const rows = resp.data.values || [];
+    const records = rows.map((r, i) => ({
+      row: i + 2,
+      week_date:      r[0] || '',
+      client_name:    r[1] || '',
+      risk_score:     r[2] || '',
+      tier:           r[3] || '',
+      risk_reason:    r[4] || '',
+      scheduled_date: r[5] || '',
+      completed:      r[6] === 'Yes',
+      completed_date: r[7] || '',
+      notes:          r[8] || '',
+      created_by:     r[9] || '',
+    }));
+    res.json({ records });
+  } catch (err) {
+    console.error('care-focus GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/care-focus — log a new care focus record for a client
+app.post('/api/care-focus', async (req, res) => {
+  try {
+    const { client_name, risk_score, tier, risk_reason, scheduled_date, notes, created_by } = req.body;
+    if (!client_name) return res.status(400).json({ error: 'client_name required' });
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureCFTab(sheets, spreadsheetId);
+    const week_date = new Date().toLocaleDateString('en-US');
+    await sheets.spreadsheets.values.append({
+      spreadsheetId, range: `${CF_SHEET_NAME}!A:J`,
+      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [[week_date, client_name, risk_score || '', tier || '', risk_reason || '', scheduled_date || '', 'No', '', notes || '', created_by || '']] },
+    });
+    res.json({ ok: true, week_date, client_name });
+  } catch (err) {
+    console.error('care-focus POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/care-focus/:clientName — mark completed or update scheduled date
+app.patch('/api/care-focus/:clientName', async (req, res) => {
+  try {
+    const clientName = decodeURIComponent(req.params.clientName).toLowerCase();
+    const { completed, completed_date, scheduled_date, notes } = req.body;
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureCFTab(sheets, spreadsheetId);
+    // Find most recent row for this client
+    const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${CF_SHEET_NAME}!A2:J` });
+    const rows = resp.data.values || [];
+    let rowIdx = -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if ((rows[i][1] || '').toLowerCase() === clientName) { rowIdx = i + 2; break; }
+    }
+    if (rowIdx === -1) return res.status(404).json({ error: 'Care focus record not found' });
+    const row = rows[rowIdx - 2];
+    const updated = [
+      row[0] || '', row[1] || '', row[2] || '', row[3] || '', row[4] || '',
+      scheduled_date !== undefined ? scheduled_date : (row[5] || ''),
+      completed !== undefined ? (completed ? 'Yes' : 'No') : (row[6] || 'No'),
+      completed_date !== undefined ? completed_date : (row[7] || ''),
+      notes !== undefined ? notes : (row[8] || ''),
+      row[9] || '',
+    ];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${CF_SHEET_NAME}!A${rowIdx}:J${rowIdx}`,
+      valueInputOption: 'RAW', requestBody: { values: [updated] },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('care-focus PATCH error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Serve React frontend (MUST be last) ──────────────────────────────────
 app.use(express.static(path.join(__dirname, '../build')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../build', 'index.html')));
