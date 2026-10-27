@@ -1,6 +1,98 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const BASE = process.env.REACT_APP_API_URL || '';
+
+// ── Date range helpers ────────────────────────────────────────────────────────
+function today() { return new Date().toISOString().split('T')[0]; }
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+}
+function startOfWeek() {
+  const d = new Date();
+  d.setDate(d.getDate() - d.getDay());
+  return d.toISOString().split('T')[0];
+}
+function startOfMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+function startOfYear() { return `${new Date().getFullYear()}-01-01`; }
+function lastWeekRange() {
+  const end = new Date(); end.setDate(end.getDate() - end.getDay() - 1);
+  const start = new Date(end); start.setDate(end.getDate() - 6);
+  return { from: start.toISOString().split('T')[0], to: end.toISOString().split('T')[0] };
+}
+
+const DATE_PRESETS = [
+  { label: 'All time',     from: '', to: '' },
+  { label: 'Today',        from: today(), to: today() },
+  { label: 'Yesterday',    from: daysAgo(1), to: daysAgo(1) },
+  { label: 'This week',    from: startOfWeek(), to: today() },
+  { label: 'Last week',    ...lastWeekRange() },
+  { label: 'Last 30 days', from: daysAgo(30), to: today() },
+  { label: 'This month',   from: startOfMonth(), to: today() },
+  { label: 'Last 90 days', from: daysAgo(90), to: today() },
+  { label: 'This year',    from: startOfYear(), to: today() },
+  { label: 'Custom…',      from: null, to: null },
+];
+
+function DateRangePicker({ dateFrom, dateTo, onChange }) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [activePreset, setActivePreset] = useState('All time');
+
+  const handlePreset = (preset) => {
+    if (preset.label === 'Custom…') { setShowCustom(true); return; }
+    setShowCustom(false);
+    setActivePreset(preset.label);
+    onChange(preset.from, preset.to);
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
+      <div className="flex flex-wrap gap-1.5 items-center">
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">Period:</span>
+        {DATE_PRESETS.map(p => (
+          <button
+            key={p.label}
+            onClick={() => handlePreset(p)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+              activePreset === p.label && !showCustom
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {showCustom && (
+        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-50">
+          <label className="text-xs text-gray-500">From</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => { setActivePreset('Custom…'); onChange(e.target.value, dateTo); }}
+            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <label className="text-xs text-gray-500">To</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => { setActivePreset('Custom…'); onChange(dateFrom, e.target.value); }}
+            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {(dateFrom || dateTo) && (
+            <span className="text-xs text-blue-600 font-medium">
+              {dateFrom || '…'} → {dateTo || '…'}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function pct(n, total) {
@@ -43,15 +135,37 @@ function StackBar({ cancelled, saved, pending, total }) {
   );
 }
 
+// ── Category icon map ─────────────────────────────────────────────────────────
+const CATEGORY_ICON = {
+  'Moving / Relocation':      '📦',
+  'Price / Cost':             '💰',
+  'Frequency Change':         '📅',
+  'Quality Concern':          '⭐',
+  'Technician Issue':         '🧹',
+  'Property Change':          '🏠',
+  'DIY / Family Cleaning':    '👨‍👩‍👧',
+  'Seasonal / Travel':        '✈️',
+  'Health / Life Event':      '❤️',
+  'Financial Hardship':       '📉',
+  'Home Renovation':          '🔨',
+  'Temporary Pause':          '⏸️',
+  'Service Scope Mismatch':   '🔄',
+  'Scheduling / Commitment':  '🗓️',
+  'No Reason Given':          '❓',
+  'Not stated':               '—',
+};
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 function ReasonRow({ item, max, labelKey, isAI }) {
   const label = item[labelKey];
+  const icon = CATEGORY_ICON[label] || (isAI ? '🤖' : '💬');
   const saveRate = item.count > 0 ? pct(item.saved, item.count) : 0;
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-800 truncate">{label}</span>
+          <span className="text-base leading-none">{icon}</span>
+          <span className="text-sm font-semibold text-gray-800">{label}</span>
           {isAI && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium shrink-0">AI</span>
           )}
@@ -121,11 +235,11 @@ function RecordRow({ r, expanded, onToggle }) {
           <div className="text-xs text-gray-400 mt-0.5">{r.date} · {r.staff_name}</div>
         </div>
         <div className="text-right shrink-0 text-xs space-y-0.5">
-          {r.stated_reason && (
-            <div className="text-purple-600 font-medium truncate max-w-[120px]">{r.stated_reason}</div>
+          {r.stated_reason && r.stated_reason !== 'Not stated' && (
+            <div className="text-purple-600 font-medium">{CATEGORY_ICON[r.stated_reason] || '💬'} {r.stated_reason}</div>
           )}
           {r.ai_driver && (
-            <div className="text-blue-600 truncate max-w-[120px]">{r.ai_driver}</div>
+            <div className="text-blue-600">{CATEGORY_ICON[r.ai_driver] || '🤖'} {r.ai_driver}</div>
           )}
         </div>
         <span className="text-gray-300 ml-1">{expanded ? '▲' : '▼'}</span>
@@ -136,11 +250,25 @@ function RecordRow({ r, expanded, onToggle }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
             <div className="bg-white rounded-lg p-3 border border-purple-100">
               <div className="text-xs font-semibold text-purple-600 uppercase tracking-wide mb-1">Stated Reason</div>
-              <p className="text-sm text-gray-700">{r.stated_reason || <span className="italic text-gray-400">Not provided</span>}</p>
+              {r.stated_reason && r.stated_reason !== 'Not stated' && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold mb-2">
+                  {CATEGORY_ICON[r.stated_reason] || '💬'} {r.stated_reason}
+                </div>
+              )}
+              <p className="text-sm text-gray-600 leading-relaxed mt-1">
+                {r.stated_reason_raw || <span className="italic text-gray-400">Not provided</span>}
+              </p>
             </div>
             <div className="bg-white rounded-lg p-3 border border-blue-100">
-              <div className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">AI-Assessed Driver</div>
-              <p className="text-sm text-gray-700">{r.ai_driver || <span className="italic text-gray-400">Not analyzed</span>}</p>
+              <div className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">AI-Assessed Root Cause</div>
+              {r.ai_driver && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold mb-2">
+                  {CATEGORY_ICON[r.ai_driver] || '🤖'} {r.ai_driver}
+                </div>
+              )}
+              <p className="text-sm text-gray-600 leading-relaxed mt-1">
+                {r.ai_driver_raw || <span className="italic text-gray-400">Not analyzed</span>}
+              </p>
             </div>
           </div>
           {r.root_cause_evidence && (
@@ -173,22 +301,27 @@ export default function CancellationDrivers() {
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
   const [expanded, setExpanded] = useState(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
-  useEffect(() => {
-    fetch(`${BASE}/api/cancellation-drivers`)
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    const qs = params.toString() ? `?${params}` : '';
+    fetch(`${BASE}/api/cancellation-drivers${qs}`)
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
-  }, []);
+  }, [dateFrom, dateTo]);
 
-  if (loading) return (
-    <div className="flex items-center justify-center min-h-64">
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-sm text-gray-400">Analyzing cancellation patterns…</p>
-      </div>
-    </div>
-  );
+  useEffect(() => { load(); }, [load]);
+
+  const handleDateChange = (from, to) => {
+    setDateFrom(from);
+    setDateTo(to);
+  };
 
   if (error) return (
     <div className="p-8 text-center">
@@ -205,21 +338,18 @@ export default function CancellationDrivers() {
   const totalSaved = records.filter(r => r.outcome === 'Saved').length;
   const saveRate = total > 0 ? pct(totalSaved, total) : 0;
 
-  // Match/mismatch rate
   const withBoth = records.filter(r => r.stated_reason && r.stated_reason !== 'Not stated' && r.ai_driver);
-  const mismatched = withBoth.filter(r =>
-    !r.ai_driver?.toLowerCase().includes(r.stated_reason?.toLowerCase().split(' ')[0]) &&
-    !r.stated_reason?.toLowerCase().includes(r.ai_driver?.toLowerCase().split(' ')[0])
-  );
+  const mismatched = withBoth.filter(r => r.stated_reason !== r.ai_driver);
 
   const filteredRecords = records
     .filter(r => outcomeFilter === 'all' || r.outcome === outcomeFilter)
     .filter(r => !search || r.client_name?.toLowerCase().includes(search.toLowerCase()) ||
       r.stated_reason?.toLowerCase().includes(search.toLowerCase()) ||
-      r.ai_driver?.toLowerCase().includes(search.toLowerCase()));
+      r.ai_driver?.toLowerCase().includes(search.toLowerCase()) ||
+      r.stated_reason_raw?.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -241,142 +371,153 @@ export default function CancellationDrivers() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: 'Total Evaluations', value: total, color: 'text-gray-800', sub: 'with reason data' },
-          { label: 'Cancelled', value: totalCancelled, color: 'text-red-600', sub: `${pct(totalCancelled, total)}% of evals` },
-          { label: 'Saved', value: totalSaved, color: 'text-green-600', sub: `${saveRate}% save rate` },
-          { label: 'Reason Mismatch', value: mismatched.length, color: 'text-purple-600', sub: 'stated ≠ AI finding' },
-        ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-            <div className={`text-2xl font-bold ${c.color}`}>{c.value}</div>
-            <div className="text-xs font-semibold text-gray-500 mt-0.5 uppercase tracking-wide">{c.label}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{c.sub}</div>
-          </div>
-        ))}
-      </div>
+      {/* Date Range Picker */}
+      <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} onChange={handleDateChange} />
 
-      {tab === 'overview' && (
+      {/* Summary Cards */}
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="text-center">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-gray-400">Analyzing cancellation patterns…</p>
+          </div>
+        </div>
+      ) : (
         <>
-          {/* Monthly Trend */}
-          {monthly_trend.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Monthly Trend</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Last 12 months — <span className="text-red-400">■ cancelled</span> <span className="text-green-500">■ saved</span></p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: 'Total Cancellations', value: total, color: 'text-gray-800', sub: 'in selected period' },
+              { label: 'Cancelled', value: totalCancelled, color: 'text-red-600', sub: `${pct(totalCancelled, total)}% of evals` },
+              { label: 'Saved', value: totalSaved, color: 'text-green-600', sub: `${saveRate}% save rate` },
+              { label: 'Reason Mismatch', value: mismatched.length, color: 'text-purple-600', sub: 'stated ≠ AI finding' },
+            ].map(c => (
+              <div key={c.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+                <div className={`text-2xl font-bold ${c.color}`}>{c.value}</div>
+                <div className="text-xs font-semibold text-gray-500 mt-0.5 uppercase tracking-wide">{c.label}</div>
+                <div className="text-xs text-gray-400 mt-0.5">{c.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {tab === 'overview' && (
+            <>
+              {monthly_trend.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Monthly Trend</h2>
+                      <p className="text-xs text-gray-400 mt-0.5">Last 12 months — <span className="text-red-400">■ cancelled</span> <span className="text-green-500">■ saved</span></p>
+                    </div>
+                  </div>
+                  <MonthlyChart monthly={monthly_trend} />
+                </div>
+              )}
+
+              {/* Side-by-side reasons */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Stated Reasons */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Stated by Client</h2>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">Client's reason, grouped into categories</p>
+                  <div className="divide-y divide-gray-50">
+                    {stated_reasons.filter(r => r.reason !== 'Not stated').slice(0, 12).map(item => (
+                      <ReasonRow key={item.reason} item={item} max={maxStated} labelKey="reason" isAI={false} />
+                    ))}
+                    {stated_reasons.filter(r => r.reason !== 'Not stated').length === 0 && (
+                      <p className="text-sm text-gray-400 py-4 text-center">No stated reasons recorded yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* AI Drivers */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">AI-Assessed Root Cause</h2>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">What CRIS determined was the real driver</p>
+                  <div className="divide-y divide-gray-50">
+                    {ai_drivers.slice(0, 12).map(item => (
+                      <ReasonRow key={item.driver} item={item} max={maxAI} labelKey="driver" isAI={true} />
+                    ))}
+                    {ai_drivers.length === 0 && (
+                      <p className="text-sm text-gray-400 py-4 text-center">No AI analysis data yet</p>
+                    )}
+                  </div>
                 </div>
               </div>
-              <MonthlyChart monthly={monthly_trend} />
-            </div>
+
+              {mismatched.length > 0 && (
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-purple-500 text-lg mt-0.5">⚡</span>
+                    <div>
+                      <div className="text-sm font-semibold text-purple-800">
+                        {mismatched.length} cancellation{mismatched.length !== 1 ? 's' : ''} where stated reason didn't match AI finding
+                      </div>
+                      <p className="text-xs text-purple-600 mt-1">
+                        These clients may not have shared the real reason. Review them in All Records to identify hidden patterns.
+                      </p>
+                      <button
+                        onClick={() => setTab('records')}
+                        className="mt-2 text-xs font-semibold text-purple-700 underline hover:text-purple-900"
+                      >
+                        View all records →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
-          {/* Side-by-side reasons */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Stated Reasons */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-purple-500" />
-                <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Stated by Client</h2>
+          {tab === 'records' && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  placeholder="Search client, reason…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <select
+                  value={outcomeFilter}
+                  onChange={e => setOutcomeFilter(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="all">All Outcomes</option>
+                  <option value="Cancelled">Cancelled</option>
+                  <option value="Saved">Saved</option>
+                  <option value="Pending">Pending</option>
+                </select>
               </div>
-              <p className="text-xs text-gray-400 mb-4">What they told us when requesting cancellation</p>
-              <div className="divide-y divide-gray-50">
-                {stated_reasons.slice(0, 10).map(item => (
-                  <ReasonRow key={item.reason} item={item} max={maxStated} labelKey="reason" isAI={false} />
-                ))}
-                {stated_reasons.length === 0 && (
-                  <p className="text-sm text-gray-400 py-4 text-center">No stated reasons recorded yet</p>
-                )}
-              </div>
-            </div>
 
-            {/* AI Drivers */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-blue-500" />
-                <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">AI-Assessed Root Cause</h2>
+              <div className="flex items-center gap-3 text-xs text-gray-400 pb-1 border-b border-gray-50">
+                <span>{filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block" /> Stated reason</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> AI driver</span>
               </div>
-              <p className="text-xs text-gray-400 mb-4">What CRIS actually determined was driving the cancellation</p>
-              <div className="divide-y divide-gray-50">
-                {ai_drivers.slice(0, 10).map(item => (
-                  <ReasonRow key={item.driver} item={item} max={maxAI} labelKey="driver" isAI={true} />
-                ))}
-                {ai_drivers.length === 0 && (
-                  <p className="text-sm text-gray-400 py-4 text-center">No AI analysis data yet</p>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* Mismatch callout */}
-          {mismatched.length > 0 && (
-            <div className="bg-purple-50 border border-purple-100 rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <span className="text-purple-500 text-lg mt-0.5">⚡</span>
-                <div>
-                  <div className="text-sm font-semibold text-purple-800">
-                    {mismatched.length} cancellation{mismatched.length !== 1 ? 's' : ''} where stated reason didn't match AI finding
-                  </div>
-                  <p className="text-xs text-purple-600 mt-1">
-                    These clients may not have shared the real reason. Review them in All Records to identify hidden patterns.
-                  </p>
-                  <button
-                    onClick={() => setTab('records')}
-                    className="mt-2 text-xs font-semibold text-purple-700 underline hover:text-purple-900"
-                  >
-                    View all records →
-                  </button>
-                </div>
+              <div className="space-y-2">
+                {filteredRecords.length === 0 && (
+                  <p className="text-center text-gray-400 text-sm py-8">No records match your filters</p>
+                )}
+                {filteredRecords.map(r => (
+                  <RecordRow
+                    key={r.evaluation_id}
+                    r={r}
+                    expanded={expanded === r.evaluation_id}
+                    onToggle={() => setExpanded(expanded === r.evaluation_id ? null : r.evaluation_id)}
+                  />
+                ))}
               </div>
             </div>
           )}
         </>
-      )}
-
-      {tab === 'records' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
-          {/* Filters */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <input
-              type="text"
-              placeholder="Search client, reason…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <select
-              value={outcomeFilter}
-              onChange={e => setOutcomeFilter(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="all">All Outcomes</option>
-              <option value="Cancelled">Cancelled</option>
-              <option value="Saved">Saved</option>
-              <option value="Pending">Pending</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-3 text-xs text-gray-400 pb-1 border-b border-gray-50">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block" /> Stated reason</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> AI driver</span>
-          </div>
-
-          {/* Record list */}
-          <div className="space-y-2">
-            {filteredRecords.length === 0 && (
-              <p className="text-center text-gray-400 text-sm py-8">No records match your filters</p>
-            )}
-            {filteredRecords.map(r => (
-              <RecordRow
-                key={r.evaluation_id}
-                r={r}
-                expanded={expanded === r.evaluation_id}
-                onToggle={() => setExpanded(expanded === r.evaluation_id ? null : r.evaluation_id)}
-              />
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );

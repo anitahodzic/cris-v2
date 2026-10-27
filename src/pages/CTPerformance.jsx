@@ -206,7 +206,7 @@ export default function CTPerformance() {
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">CT Performance</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Cancelled by Technician</h1>
           <p className="text-sm text-gray-500 mt-1">
             Which cleaning technicians are causing the most client risk
             {has_dispatch_data && ' · Dispatch board data included'}

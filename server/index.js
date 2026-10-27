@@ -386,6 +386,31 @@ app.get('/api/evaluations/:id', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
+// Recent saves feed — for the Risk Tracker "wins" panel
+app.get('/api/recent-saves', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, outcomes] = await Promise.all([readTab(sheets,'Client_Intake'),readTab(sheets,'Outcomes')]);
+    const intakeMap = intakes.reduce((m, r) => { m[r.Evaluation_ID] = r; return m; }, {});
+    const days = parseInt(req.query.days || '60', 10);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const saves = outcomes
+      .filter(r => r.Outcome === 'Saved' && r.Timestamp >= since)
+      .map(r => ({
+        client_name: r.Client_Name || intakeMap[r.Evaluation_ID]?.Client_Name || '',
+        staff_name: r.Staff_Name || intakeMap[r.Evaluation_ID]?.Staff_Name || '',
+        program: r.Program_Offered || '',
+        revenue_saved: r.Revenue_Saved || '',
+        date: r.Closed_Date || r.Timestamp?.split('T')[0] || '',
+        timestamp: r.Timestamp || '',
+      }))
+      .filter(r => r.client_name)
+      .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
+      .slice(0, 20);
+    res.json({ saves });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/dashboard', async (req, res) => {
   try {
     const sheets = await getSheets();
@@ -1640,8 +1665,60 @@ app.post('/api/care-focus/bulk', async (req, res) => {
 });
 
 // ─── Cancellation Drivers ─────────────────────────────────────────────────
-// GET /api/cancellation-drivers
-// Returns breakdown of stated vs AI-assessed cancellation reasons
+// GET /api/cancellation-drivers?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+// Returns breakdown of stated (categorized) vs AI-assessed cancellation reasons
+
+// Normalize free-text stated reasons into clean categories
+function categorizeStatedReason(text) {
+  if (!text || text.trim() === '') return 'Not stated';
+  const t = text.toLowerCase();
+
+  // Contact method artifacts (these are form field values, not reasons)
+  if (/^(email|phone|sms|text|call|chat|online|website|app)$/.test(t.trim())) return 'Not stated';
+  // Raw data dumps (client stats pasted in)
+  if (t.includes('customer start') || t.includes('last cleaning') || t.includes('next cl')) return 'Not stated';
+
+  if (/mov(ing|ed)|relocat|new (home|house|city|state|address)|out of (area|town|state)/.test(t)) return 'Moving / Relocation';
+  if (/price|cost|expens|afford|budget|fee|rate|too much|cheaper|money|financial|saving/.test(t)) return 'Price / Cost';
+  if (/frequen|every (other|month|week|two)|bi-?weekly|monthly|less often|skip|cut back|reduc/.test(t)) return 'Frequency Change';
+  if (/quality|clean|job|dirty|missed|not (happy|satisfied|pleased)|complaint|issue|problem|poor/.test(t)) return 'Quality Concern';
+  if (/tech|cleaner|team|staff|specific (person|cleaner)|want.*back|prefer/.test(t)) return 'Technician Issue';
+  if (/sold|selling|list(ing)?|foreclos|rental|airbnb|empty|vacant/.test(t)) return 'Property Change';
+  if (/do it (my|our)self|self|husband|wife|family|son|daughter|kid/.test(t)) return 'DIY / Family Cleaning';
+  if (/travel|vacation|away|not (home|here|around)|snowbird|seasonal|summer|winter/.test(t)) return 'Seasonal / Travel';
+  if (/health|sick|hospital|surgery|ill|cancer|medic|pass(ed)?|death|died|elder/.test(t)) return 'Health / Life Event';
+  if (/job|work|laid off|unemploy|retire|income|pay cut/.test(t)) return 'Financial Hardship';
+  if (/renovati|construc|remodel|repair/.test(t)) return 'Home Renovation';
+  if (/pause|hold|temporary|for now|come back|return|maybe later/.test(t)) return 'Temporary Pause';
+  if (/no reason|just cancel|not sure|unknown|n\/a|na$/.test(t)) return 'No Reason Given';
+  // Fallback: shorten long text to first meaningful phrase
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  return cleaned.length > 40 ? cleaned.slice(0, 40) + '…' : cleaned;
+}
+
+// Normalize AI drivers into clean categories
+function categorizeAIDriver(text) {
+  if (!text || text.trim() === '') return null;
+  const t = text.toLowerCase();
+
+  if (/reloc|mov(ing|ed)|out of (area|town|state|city)|new home/.test(t)) return 'Moving / Relocation';
+  if (/price|cost|expens|afford|budget|fee|too (high|much)|cheaper/.test(t)) return 'Price / Cost';
+  if (/frequen|every (other|month|week|two)|bi-?weekly|less often|skip|cut back/.test(t)) return 'Frequency Change';
+  if (/quality|clean(ing)? (issue|problem|concern)|dissatisfi|not (happy|pleased)/.test(t)) return 'Quality Concern';
+  if (/tech|cleaner|staff|team (issue|problem)|personnel/.test(t)) return 'Technician Issue';
+  if (/sold|property|rental|empty|vacant|list(ing)?/.test(t)) return 'Property Change';
+  if (/self|diy|family|do it (themselves|ourselves)/.test(t)) return 'DIY / Family Cleaning';
+  if (/travel|vacation|seasonal|away|snowbird/.test(t)) return 'Seasonal / Travel';
+  if (/health|illness|medical|life (event|circumstance)|personal|death|cancer/.test(t)) return 'Health / Life Event';
+  if (/job loss|financial (hardship|strain)|unemploy|income|laid off/.test(t)) return 'Financial Hardship';
+  if (/renovati|construc|remodel/.test(t)) return 'Home Renovation';
+  if (/scope|mismatch|expectation|service (gap|level)/.test(t)) return 'Service Scope Mismatch';
+  if (/commitment|schedule|timing|availability/.test(t)) return 'Scheduling / Commitment';
+  // Shorten long AI text
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  return cleaned.length > 45 ? cleaned.slice(0, 45) + '…' : cleaned;
+}
+
 app.get('/api/cancellation-drivers', async (req, res) => {
   try {
     const sheets = await getSheets();
@@ -1654,17 +1731,26 @@ app.get('/api/cancellation-drivers', async (req, res) => {
     const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
     const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
 
+    // Date range filter
+    const { date_from, date_to } = req.query;
+    const fromDate = date_from ? new Date(date_from) : null;
+    const toDate = date_to ? new Date(date_to + 'T23:59:59') : null;
+
     // Build per-evaluation record
-    const records = intakes.map(i => {
+    let records = intakes.map(i => {
       const analysis = analysisMap[i.Evaluation_ID];
       const outcome = outcomeMap[i.Evaluation_ID];
+      const rawStated = i.Cancellation_Reason || null;
+      const rawAI = analysis?.Primary_Cancellation_Driver || null;
       return {
         evaluation_id: i.Evaluation_ID,
         client_name: i.Client_Name,
         date: i.Created_Date,
         staff_name: i.Staff_Name,
-        stated_reason: i.Cancellation_Reason || null,
-        ai_driver: analysis?.Primary_Cancellation_Driver || null,
+        stated_reason_raw: rawStated,
+        stated_reason: categorizeStatedReason(rawStated),
+        ai_driver_raw: rawAI,
+        ai_driver: categorizeAIDriver(rawAI),
         ai_summary: analysis?.AI_Summary || null,
         root_cause_evidence: analysis?.Root_Cause_Evidence || null,
         outcome: outcome?.Outcome || 'Pending',
@@ -1672,12 +1758,23 @@ app.get('/api/cancellation-drivers', async (req, res) => {
         recommended_program: analysis?.Recommended_Program || null,
         recommended_strategy: analysis?.Recommended_Strategy || null,
       };
-    }).filter(r => r.stated_reason || r.ai_driver); // only ones with some reason data
+    }).filter(r => r.stated_reason !== 'Not stated' || r.ai_driver); // only with useful data
 
-    // Tally stated reasons
+    // Apply date range
+    if (fromDate || toDate) {
+      records = records.filter(r => {
+        if (!r.date) return false;
+        const d = new Date(r.date);
+        if (fromDate && d < fromDate) return false;
+        if (toDate && d > toDate) return false;
+        return true;
+      });
+    }
+
+    // Tally stated reasons (categorized)
     const statedTally = {};
     records.forEach(r => {
-      const key = (r.stated_reason || 'Not stated').trim();
+      const key = r.stated_reason || 'Not stated';
       if (!statedTally[key]) statedTally[key] = { count: 0, cancelled: 0, saved: 0, pending: 0 };
       statedTally[key].count++;
       if (r.outcome === 'Cancelled') statedTally[key].cancelled++;
@@ -1685,11 +1782,11 @@ app.get('/api/cancellation-drivers', async (req, res) => {
       else statedTally[key].pending++;
     });
 
-    // Tally AI drivers
+    // Tally AI drivers (categorized)
     const aiTally = {};
     records.forEach(r => {
       if (!r.ai_driver) return;
-      const key = r.ai_driver.trim();
+      const key = r.ai_driver;
       if (!aiTally[key]) aiTally[key] = { count: 0, cancelled: 0, saved: 0, pending: 0 };
       aiTally[key].count++;
       if (r.outcome === 'Cancelled') aiTally[key].cancelled++;
@@ -1697,7 +1794,7 @@ app.get('/api/cancellation-drivers', async (req, res) => {
       else aiTally[key].pending++;
     });
 
-    // Monthly trend (last 12 months)
+    // Monthly trend
     const monthlyMap = {};
     records.forEach(r => {
       if (!r.date) return;
