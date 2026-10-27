@@ -601,16 +601,38 @@ export default function AtRiskClients({ currentUser }) {
     }))
     .sort((a, b) => b.risk_score - a.risk_score); // highest risk first
 
-  // Top 25 by score
-  const top25 = enriched.slice(0, 25);
-  const top10 = top25.slice(0, 10);   // → L2 phone calls
-  const next15 = top25.slice(10, 25); // → Care Focus
+  const COOLDOWN_DAYS = 90;
+  const isWithin90Days = (dateStr) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    if (isNaN(d)) return false;
+    return (Date.now() - d.getTime()) < COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+  };
 
+  const hasRecentL2 = (name) => {
+    const tickets = l2Tickets.filter(t => t.client_name?.toLowerCase() === name?.toLowerCase());
+    return tickets.some(t => isWithin90Days(t.date));
+  };
   const hasL2 = (name) => l2Tickets.some(t => t.client_name?.toLowerCase() === name?.toLowerCase());
   const getCfRecord = (name) => {
     const matches = cfRecords.filter(r => r.client_name?.toLowerCase() === name?.toLowerCase());
     return matches.sort((a, b) => new Date(b.week_date) - new Date(a.week_date))[0] || null;
   };
+  const hasRecentCf = (name) => {
+    const rec = getCfRecord(name);
+    if (!rec) return false;
+    return isWithin90Days(rec.week_date);
+  };
+
+  // Top 25 with cooldown applied — skip clients on 90-day cooldown, fill slots from next in line
+  const eligibleForL2 = enriched.filter(c => !hasRecentL2(c.name));
+  const eligibleForCf = enriched.filter(c => !hasRecentL2(c.name) && !hasRecentCf(c.name));
+
+  const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls
+  const next15 = eligibleForCf               // → Care Focus (skip anyone already in top10)
+    .filter(c => !top10.find(t => t.name === c.name))
+    .slice(0, 15);
+  const top25 = [...top10, ...next15];
 
   // Weekly action plan progress
   const l2Done = top10.filter(c => hasL2(c.name)).length;

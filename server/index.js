@@ -1470,6 +1470,36 @@ app.post('/api/l2-tickets', async (req, res) => {
   }
 });
 
+// POST /api/l2-tickets/bulk — seed multiple historical tickets at once
+app.post('/api/l2-tickets/bulk', async (req, res) => {
+  try {
+    const { tickets } = req.body; // array of { date, client_name, risk_score, tier, risk_reason, created_by, mc_ticket_id }
+    if (!Array.isArray(tickets) || tickets.length === 0) return res.status(400).json({ error: 'tickets array required' });
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureL2Tab(sheets, spreadsheetId);
+    const rows = tickets.map(t => [
+      t.date || new Date().toLocaleDateString('en-US'),
+      t.client_name || '',
+      t.risk_score || '',
+      t.tier || '',
+      t.risk_reason || '',
+      t.created_by || 'Historical Import',
+      t.mc_ticket_id || '',
+    ]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId, range: `${L2_SHEET_NAME}!A:G`,
+      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: rows },
+    });
+    res.json({ ok: true, count: rows.length });
+  } catch (err) {
+    console.error('l2-tickets bulk POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Care Focus Tracking ──────────────────────────────────────────────────────
 // Columns: A=Week_Date, B=Client_Name, C=Risk_Score, D=Tier, E=Risk_Reason,
 //          F=Scheduled_Date, G=Completed, H=Completed_Date, I=Notes, J=Created_By
@@ -1572,6 +1602,39 @@ app.patch('/api/care-focus/:clientName', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('care-focus PATCH error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/care-focus/bulk — seed multiple historical care focus records
+app.post('/api/care-focus/bulk', async (req, res) => {
+  try {
+    const { records } = req.body; // array of { week_date, client_name, risk_score, tier, risk_reason, scheduled_date, completed, completed_date, notes, created_by }
+    if (!Array.isArray(records) || records.length === 0) return res.status(400).json({ error: 'records array required' });
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SHEET_ID;
+    await ensureCFTab(sheets, spreadsheetId);
+    const rows = records.map(r => [
+      r.week_date || new Date().toLocaleDateString('en-US'),
+      r.client_name || '',
+      r.risk_score || '',
+      r.tier || '',
+      r.risk_reason || '',
+      r.scheduled_date || '',
+      r.completed || 'No',
+      r.completed_date || '',
+      r.notes || '',
+      r.created_by || 'Historical Import',
+    ]);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId, range: `${CF_SHEET_NAME}!A:J`,
+      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: rows },
+    });
+    res.json({ ok: true, count: rows.length });
+  } catch (err) {
+    console.error('care-focus bulk POST error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
