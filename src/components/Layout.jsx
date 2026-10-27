@@ -22,7 +22,7 @@ const NAV_GROUPS = [
     items: [
       { id: 'customer-report',        label: 'Client Report',        icon: '⊙' },
       { id: 'monthly-report',        label: 'Monthly Report',       icon: '↑' },
-      { id: 'tech-report',           label: 'Tech Report',          icon: '👷' },
+      { id: 'tech-report',           label: 'Cancellations by Tech', icon: '👷' },
       { id: 'cancellation-drivers',  label: 'Cancel Drivers',       icon: '⊗' },
       { id: 'ct-performance',        label: 'CT Performance',       icon: '🔍' },
       { id: 'cris-vs-data',          label: 'CRIS vs Data',         icon: '◈' },

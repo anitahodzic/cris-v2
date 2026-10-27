@@ -2113,6 +2113,35 @@ app.post('/api/mc/create-note', async (req, res) => {
       });
     }
 
+    // 90-day dedup check: skip if same client + ticket type within 90 days
+    try {
+      const auth = await getGoogleAuth();
+      const sheetsApi = google.sheets({ version: 'v4', auth });
+      const dedupResp = await sheetsApi.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: 'MC_Tickets!A:D',
+      });
+      const dedupRows = (dedupResp.data.values || []).slice(1); // skip header
+      const ticketType = Number(level) === 1 ? 'L1' : 'L2';
+      const normName = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const duplicate = dedupRows.find(r => {
+        const [rClient, rType, rDate] = r;
+        if (normName(rClient) !== normName(client_name)) return false;
+        if (rType !== ticketType) return false;
+        const d = new Date(rDate);
+        return !isNaN(d) && d >= cutoff90;
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          error: `Duplicate ticket: a ${ticketType} ticket for "${client_name}" was already created within the last 90 days (${duplicate[2]}).`,
+          duplicate: true,
+        });
+      }
+    } catch (dedupErr) {
+      console.warn('[mc/create-note] dedup check failed, proceeding anyway:', dedupErr.message);
+    }
+
     // Build subject and content based on L1 vs L2
     let subject, content;
     if (Number(level) === 1) {
@@ -2124,6 +2153,23 @@ app.post('/api/mc/create-note', async (req, res) => {
     }
 
     const result = await createMCNote({ email, subject, content, createTicket: create_ticket });
+
+    // Log to MC_Tickets sheet for dedup tracking
+    try {
+      const auth = await getGoogleAuth();
+      const sheetsApi = google.sheets({ version: 'v4', auth });
+      const ticketType = Number(level) === 1 ? 'L1' : 'L2';
+      const today = new Date().toISOString().slice(0, 10);
+      await sheetsApi.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: 'MC_Tickets!A:E',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[client_name, ticketType, today, reason, 'CRIS']] },
+      });
+    } catch (logErr) {
+      console.warn('[mc/create-note] Failed to log to MC_Tickets:', logErr.message);
+    }
+
     res.json({ ok: true, email, level, subject, mc_response: result });
   } catch (err) {
     console.error('[mc/create-note]', err);

@@ -202,11 +202,46 @@ function CareFocusCompleteModal({ client, onSave, onClose }) {
 function L2TicketModal({ client, currentUser, onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const mcUrl = `https://app.maidcentral.com/`;
+  const [mcStatus, setMcStatus] = useState(null); // null | 'created' | 'duplicate' | 'no_email' | 'error'
 
   const handleCreate = async () => {
     setSaving(true);
+    setErr('');
     try {
+      const reason = client.signals?.[0] || client.top_signal || 'At-risk client';
+
+      // 1. Create MC ticket (L2)
+      let mcTicketId = '';
+      try {
+        const mcRes = await fetch(`${BASE}/api/mc/create-note`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: client.name,
+            level: 2,
+            reason,
+            details: client.signals?.slice(1).join('; ') || '',
+            create_ticket: true,
+          }),
+        });
+        const mcData = await mcRes.json();
+        if (mcRes.status === 409) {
+          setMcStatus('duplicate');
+        } else if (mcRes.status === 404) {
+          setMcStatus('no_email');
+        } else if (!mcData.ok) {
+          setMcStatus('error');
+          console.warn('[L2Modal] MC ticket error:', mcData.error);
+        } else {
+          setMcStatus('created');
+          mcTicketId = mcData.mc_response?.Id || '';
+        }
+      } catch (mcErr) {
+        setMcStatus('error');
+        console.warn('[L2Modal] MC ticket failed:', mcErr.message);
+      }
+
+      // 2. Log to CRIS (always, even if MC had issues)
       const res = await fetch(`${BASE}/api/l2-tickets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -214,9 +249,9 @@ function L2TicketModal({ client, currentUser, onSave, onClose }) {
           client_name: client.name,
           risk_score: client.risk_score,
           tier: client.effective_tier || client.risk_tier,
-          risk_reason: client.signals?.[0] || client.top_signal || '',
+          risk_reason: reason,
           created_by: currentUser?.username || 'CRIS',
-          mc_ticket_id: '',
+          mc_ticket_id: mcTicketId,
         }),
       });
       const data = await res.json();
@@ -237,7 +272,7 @@ function L2TicketModal({ client, currentUser, onSave, onClose }) {
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 500, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
         <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', background: '#fff7ed' }}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>📞 Log L2 Phone Call</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>📞 Create L2 Ticket</h3>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
             {client.name} · <span style={{ fontWeight: 700, color: s.color }}>{tier} Risk</span> · Score {client.risk_score}
           </p>
@@ -251,22 +286,26 @@ function L2TicketModal({ client, currentUser, onSave, onClose }) {
               ))}
             </div>
           )}
+          {mcStatus === 'duplicate' && (
+            <div style={{ background: '#fef9c3', border: '1px solid #fde047', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#713f12' }}>
+              ⚠ An L2 ticket for <strong>{client.name}</strong> was already created in the last 90 days. CRIS will still log this call but won't create a duplicate MC ticket.
+            </div>
+          )}
+          {mcStatus === 'no_email' && (
+            <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#7f1d1d' }}>
+              ⚠ No email found for <strong>{client.name}</strong> in MaidCentral. Logged in CRIS only — please create the MC ticket manually.
+            </div>
+          )}
           <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#0369a1', lineHeight: 1.6 }}>
-            <strong>Step 1:</strong> Open MaidCentral and create an L2 ticket for <strong>{client.name}</strong>.<br/>
-            <strong>Step 2:</strong> Make the call and log the outcome in MaidCentral.<br/>
-            <strong>Step 3:</strong> Click <em>"Log in CRIS"</em> below to record this ticket here.
+            Clicking <em>"Create L2 Ticket"</em> will automatically create a ticket in MaidCentral and log it in CRIS.
           </div>
-          <a href={mcUrl} target="_blank" rel="noopener noreferrer"
-            style={{ display: 'block', textAlign: 'center', padding: '10px 20px', background: 'linear-gradient(135deg,#059669,#10b981)', color: '#fff', borderRadius: 10, fontSize: 14, fontWeight: 700, textDecoration: 'none' }}>
-            → Open MaidCentral
-          </a>
           {err && <p style={{ fontSize: 13, color: '#dc2626', margin: 0 }}>{err}</p>}
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '9px 18px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, fontWeight: 600, color: '#64748b', background: '#fff', cursor: 'pointer' }}>Cancel</button>
           <button onClick={handleCreate} disabled={saving}
             style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: saving ? '#94a3b8' : 'linear-gradient(135deg,#d97706,#f59e0b)', cursor: saving ? 'default' : 'pointer' }}>
-            {saving ? 'Saving…' : '✓ Log in CRIS'}
+            {saving ? 'Creating…' : '✓ Create L2 Ticket'}
           </button>
         </div>
       </div>

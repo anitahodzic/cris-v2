@@ -55,7 +55,7 @@ export default function TechnicianReport() {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Technician Cancellation Report</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Cancellations by Technician</h1>
         <p className="text-sm text-gray-500 mt-1">
           Which technicians appeared most often as the last cleaner before a client cancelled.
           Based on {total_evaluations} evaluations, {total_cancelled} cancelled.
