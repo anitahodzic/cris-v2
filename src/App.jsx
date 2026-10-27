@@ -13,6 +13,9 @@ import AiChat from './pages/AiChat';
 import AccountAudit from './pages/AccountAudit';
 import AtRiskClients from './pages/AtRiskClients';
 import TechnicianReport from './pages/TechnicianReport';
+import CancellationDrivers from './pages/CancellationDrivers';
+import CTPerformance from './pages/CTPerformance';
+import CRISvsData from './pages/CRISvsData';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
@@ -60,8 +63,11 @@ export default function App() {
       case 'ai-chat':         return <AiChat currentUser={currentUser} />;
       case 'account-audit':   return <AccountAudit currentUser={currentUser} isAdmin={isAdmin} />;
       case 'at-risk':         return <AtRiskClients currentUser={currentUser} isAdmin={isAdmin} />;
-      case 'tech-report':     return <TechnicianReport />;
-      default:                return <Dashboard {...commonProps} />;
+      case 'tech-report':           return <TechnicianReport />;
+      case 'cancellation-drivers':  return <CancellationDrivers />;
+      case 'ct-performance':        return <CTPerformance />;
+      case 'cris-vs-data':          return <CRISvsData />;
+      default:                      return <Dashboard {...commonProps} />;
     }
   };
 

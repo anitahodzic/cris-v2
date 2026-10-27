@@ -1639,6 +1639,379 @@ app.post('/api/care-focus/bulk', async (req, res) => {
   }
 });
 
+// ─── Cancellation Drivers ─────────────────────────────────────────────────
+// GET /api/cancellation-drivers
+// Returns breakdown of stated vs AI-assessed cancellation reasons
+app.get('/api/cancellation-drivers', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, analyses, outcomes] = await Promise.all([
+      readTab(sheets, 'Client_Intake'),
+      readTab(sheets, 'AI_Analysis'),
+      readTab(sheets, 'Outcomes'),
+    ]);
+
+    const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
+    const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
+
+    // Build per-evaluation record
+    const records = intakes.map(i => {
+      const analysis = analysisMap[i.Evaluation_ID];
+      const outcome = outcomeMap[i.Evaluation_ID];
+      return {
+        evaluation_id: i.Evaluation_ID,
+        client_name: i.Client_Name,
+        date: i.Created_Date,
+        staff_name: i.Staff_Name,
+        stated_reason: i.Cancellation_Reason || null,
+        ai_driver: analysis?.Primary_Cancellation_Driver || null,
+        ai_summary: analysis?.AI_Summary || null,
+        root_cause_evidence: analysis?.Root_Cause_Evidence || null,
+        outcome: outcome?.Outcome || 'Pending',
+        save_score: analysis?.Save_Worthiness_Score ?? null,
+        recommended_program: analysis?.Recommended_Program || null,
+        recommended_strategy: analysis?.Recommended_Strategy || null,
+      };
+    }).filter(r => r.stated_reason || r.ai_driver); // only ones with some reason data
+
+    // Tally stated reasons
+    const statedTally = {};
+    records.forEach(r => {
+      const key = (r.stated_reason || 'Not stated').trim();
+      if (!statedTally[key]) statedTally[key] = { count: 0, cancelled: 0, saved: 0, pending: 0 };
+      statedTally[key].count++;
+      if (r.outcome === 'Cancelled') statedTally[key].cancelled++;
+      else if (r.outcome === 'Saved') statedTally[key].saved++;
+      else statedTally[key].pending++;
+    });
+
+    // Tally AI drivers
+    const aiTally = {};
+    records.forEach(r => {
+      if (!r.ai_driver) return;
+      const key = r.ai_driver.trim();
+      if (!aiTally[key]) aiTally[key] = { count: 0, cancelled: 0, saved: 0, pending: 0 };
+      aiTally[key].count++;
+      if (r.outcome === 'Cancelled') aiTally[key].cancelled++;
+      else if (r.outcome === 'Saved') aiTally[key].saved++;
+      else aiTally[key].pending++;
+    });
+
+    // Monthly trend (last 12 months)
+    const monthlyMap = {};
+    records.forEach(r => {
+      if (!r.date) return;
+      const d = new Date(r.date);
+      if (isNaN(d)) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyMap[key]) monthlyMap[key] = { month: key, total: 0, cancelled: 0, saved: 0, top_driver: {} };
+      monthlyMap[key].total++;
+      if (r.outcome === 'Cancelled') monthlyMap[key].cancelled++;
+      else if (r.outcome === 'Saved') monthlyMap[key].saved++;
+      if (r.ai_driver) {
+        monthlyMap[key].top_driver[r.ai_driver] = (monthlyMap[key].top_driver[r.ai_driver] || 0) + 1;
+      }
+    });
+    const monthly = Object.values(monthlyMap)
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .slice(-12)
+      .map(m => ({
+        ...m,
+        top_driver: Object.entries(m.top_driver).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
+      }));
+
+    res.json({
+      total: records.length,
+      stated_reasons: Object.entries(statedTally)
+        .map(([reason, stats]) => ({ reason, ...stats }))
+        .sort((a, b) => b.count - a.count),
+      ai_drivers: Object.entries(aiTally)
+        .map(([driver, stats]) => ({ driver, ...stats }))
+        .sort((a, b) => b.count - a.count),
+      monthly_trend: monthly,
+      records: records.sort((a, b) => new Date(b.date) - new Date(a.date)),
+    });
+  } catch (err) {
+    console.error('cancellation-drivers error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── CT Performance — Dispatch Board Enriched ─────────────────────────────
+// GET /api/ct-performance
+// Returns technician risk data enriched with last 3 visits per client from dispatch board
+app.get('/api/ct-performance', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, analyses, outcomes] = await Promise.all([
+      readTab(sheets, 'Client_Intake'),
+      readTab(sheets, 'AI_Analysis'),
+      readTab(sheets, 'Outcomes'),
+    ]);
+
+    const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
+    const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
+
+    // Load dispatch board CSV from Drive
+    let dispatchRows = [];
+    try {
+      const result = await cachedDriveCSV(DRIVE_FOLDER_DISPATCH_BOARD);
+      dispatchRows = result.rows || [];
+    } catch (e) {
+      console.warn('ct-performance: dispatch board load failed:', e.message);
+    }
+
+    // Build client visit history from dispatch board
+    // Group by Customer name, sorted by Scheduled date desc
+    const clientVisits = {};
+    for (const row of dispatchRows) {
+      const customer = (row['Customer'] || '').replace(/\*$/, '').trim();
+      const tech = (row['Team'] || '').trim();
+      const scheduled = row['Scheduled'] || '';
+      const scorecard = row['Scorecard'] ? parseInt(row['Scorecard']) : null;
+      const status = row['Status'] || '';
+      const freq = row['Freq.'] || '';
+      if (!customer || !tech) continue;
+
+      // Parse date from "9/28/2026 7:00 AM - 9:00 AM"
+      const datePart = scheduled.split(' ')[0];
+      const visitDate = datePart ? new Date(datePart) : null;
+
+      if (!clientVisits[customer]) clientVisits[customer] = [];
+      clientVisits[customer].push({ tech, scorecard, date: visitDate, dateStr: datePart, status, freq });
+    }
+
+    // Sort each client's visits by date desc
+    for (const name of Object.keys(clientVisits)) {
+      clientVisits[name].sort((a, b) => (b.date || 0) - (a.date || 0));
+    }
+
+    // Build technician risk map from evaluations (weighted scoring)
+    // Weight: last cleaner = 3pts, 2nd to last = 2pts, 3rd = 1pt
+    const techMap = {};
+
+    function parseTechHistory(paste) {
+      if (!paste) return [];
+      const techs = [];
+      const lines = paste.split('\n').map(l => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        const match =
+          line.match(/^(.+?)\s*[-|]\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*[-|]?\s*(?:Score[:\s]*)?(\d+\.?\d*)?/i) ||
+          line.match(/^(.+?)\s+(\d{4}-\d{2}-\d{2})\s+(\d+\.?\d*)?/i);
+        if (match) {
+          const name = match[1].trim();
+          const date = match[2].trim();
+          const score = match[3] ? parseFloat(match[3]) : null;
+          if (name && name.length > 1 && name.length < 60) techs.push({ name, date, score });
+        }
+      }
+      return techs;
+    }
+
+    for (const intake of intakes) {
+      const cancelled = outcomeMap[intake.Evaluation_ID]?.Outcome === 'Cancelled';
+      const saved = outcomeMap[intake.Evaluation_ID]?.Outcome === 'Saved';
+      const analysis = analysisMap[intake.Evaluation_ID];
+
+      const techLines = parseTechHistory(intake.Technician_History_Paste);
+      if (!techLines.length) continue;
+
+      // Get client visit history from dispatch board
+      const dispatchHistory = clientVisits[intake.Client_Name] || [];
+      const last3Dispatch = dispatchHistory.slice(0, 3);
+
+      // Determine first service date from dispatch (earliest visit)
+      const allDates = dispatchHistory.map(v => v.date).filter(Boolean);
+      const firstService = allDates.length ? new Date(Math.min(...allDates.map(d => d.getTime()))) : null;
+      const clientFreq = dispatchHistory[0]?.freq || null;
+
+      const weights = [3, 2, 1];
+      for (let i = 0; i < Math.min(techLines.length, 3); i++) {
+        const t = techLines[i];
+        if (!t.name) continue;
+        if (!techMap[t.name]) {
+          techMap[t.name] = {
+            name: t.name,
+            weighted_risk_score: 0,
+            total_appearances: 0,
+            as_last_cleaner: 0,
+            cancellations_as_last: 0,
+            saves_as_last: 0,
+            avg_score_sum: 0,
+            avg_score_count: 0,
+            clients: [],
+          };
+        }
+        const entry = techMap[t.name];
+        entry.total_appearances++;
+        if (cancelled) entry.weighted_risk_score += weights[i];
+        if (t.score != null) { entry.avg_score_sum += t.score; entry.avg_score_count++; }
+        if (i === 0) {
+          entry.as_last_cleaner++;
+          if (cancelled) entry.cancellations_as_last++;
+          if (saved) entry.saves_as_last++;
+          if (cancelled || saved) {
+            entry.clients.push({
+              client: intake.Client_Name,
+              date: intake.Created_Date,
+              outcome: cancelled ? 'Cancelled' : 'Saved',
+              stated_reason: intake.Cancellation_Reason || null,
+              ai_driver: analysis?.Primary_Cancellation_Driver || null,
+              save_score: analysis?.Save_Worthiness_Score ?? null,
+              last_3_visits: last3Dispatch.map((v, idx) => ({
+                position: idx + 1,
+                tech: v.tech,
+                date: v.dateStr,
+                scorecard: v.scorecard,
+                status: v.status,
+              })),
+              first_service: firstService ? firstService.toLocaleDateString('en-US') : null,
+              frequency: clientFreq,
+            });
+          }
+        }
+      }
+    }
+
+    // Build dispatch-only tech stats (visit counts, avg scorecard)
+    const dispatchTechStats = {};
+    for (const row of dispatchRows) {
+      const tech = (row['Team'] || '').trim();
+      const scorecard = row['Scorecard'] ? parseInt(row['Scorecard']) : null;
+      const status = row['Status'] || '';
+      if (!tech) continue;
+      if (!dispatchTechStats[tech]) dispatchTechStats[tech] = { visits: 0, scorecard_sum: 0, scorecard_count: 0, cancelled_visits: 0 };
+      dispatchTechStats[tech].visits++;
+      if (scorecard) { dispatchTechStats[tech].scorecard_sum += scorecard; dispatchTechStats[tech].scorecard_count++; }
+      if (status === 'Cancelled') dispatchTechStats[tech].cancelled_visits++;
+    }
+
+    const techs = Object.values(techMap).map(t => ({
+      ...t,
+      avg_score: t.avg_score_count > 0 ? Math.round((t.avg_score_sum / t.avg_score_count) * 100) / 100 : null,
+      cancellation_rate: t.as_last_cleaner > 0 ? Math.round((t.cancellations_as_last / t.as_last_cleaner) * 100) : 0,
+      dispatch_stats: dispatchTechStats[t.name] ? {
+        total_visits: dispatchTechStats[t.name].visits,
+        avg_scorecard: dispatchTechStats[t.name].scorecard_count > 0
+          ? Math.round((dispatchTechStats[t.name].scorecard_sum / dispatchTechStats[t.name].scorecard_count) * 100) / 100
+          : null,
+        cancelled_visits: dispatchTechStats[t.name].cancelled_visits,
+      } : null,
+    })).sort((a, b) => b.weighted_risk_score - a.weighted_risk_score);
+
+    res.json({
+      techs,
+      total_evaluations: intakes.length,
+      total_cancelled: outcomes.filter(o => o.Outcome === 'Cancelled').length,
+      has_dispatch_data: dispatchRows.length > 0,
+    });
+  } catch (err) {
+    console.error('ct-performance error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── CRIS vs Data accuracy route ─────────────────────────────────────────
+app.get('/api/cris-accuracy', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const [intakes, analyses, outcomes] = await Promise.all([
+      readTab(sheets, 'Client_Intake'),
+      readTab(sheets, 'AI_Analysis'),
+      readTab(sheets, 'Outcomes'),
+    ]);
+
+    const analysisMap = analyses.reduce((m, a) => { m[a.Evaluation_ID] = a; return m; }, {});
+    const outcomeMap = outcomes.reduce((m, o) => { m[o.Evaluation_ID] = o; return m; }, {});
+
+    const now = Date.now();
+    const WINDOW_DAYS = 90;
+
+    const records = intakes.map(i => {
+      const analysis = analysisMap[i.Evaluation_ID];
+      const outcome = outcomeMap[i.Evaluation_ID];
+      const program = analysis?.Recommended_Program || null;
+      const outcomeVal = outcome?.Outcome || 'Pending';
+      const dateStr = i.Created_Date;
+      const evalDate = dateStr ? new Date(dateStr) : null;
+      const daysSince = evalDate ? Math.floor((now - evalDate.getTime()) / (1000 * 60 * 60 * 24)) : null;
+      const past90 = daysSince != null && daysSince >= WINDOW_DAYS;
+
+      // Determine verdict
+      let verdict;
+      if (outcomeVal === 'Saved' && past90) {
+        verdict = 'predicted_correct'; // Saved AND past 90 days = intervention worked
+      } else if (outcomeVal === 'Saved' && !past90) {
+        verdict = 'saved_active'; // Saved but still in window — tracking
+      } else if (outcomeVal === 'Cancelled' && past90) {
+        verdict = 'predicted_wrong'; // Still cancelled = intervention failed
+      } else {
+        verdict = 'pending'; // Still in 90-day window
+      }
+
+      return {
+        evaluation_id: i.Evaluation_ID,
+        client_name: i.Client_Name,
+        date: dateStr,
+        staff_name: i.Staff_Name,
+        program,
+        strategy: analysis?.Recommended_Strategy || null,
+        ai_risk_level: analysis?.Risk_Level || null,
+        ai_summary: analysis?.AI_Summary || null,
+        save_score: analysis?.Save_Worthiness_Score ? Number(analysis.Save_Worthiness_Score) : null,
+        outcome: outcomeVal,
+        days_since: daysSince,
+        past_90: past90,
+        verdict,
+      };
+    }).filter(r => r.program || r.outcome !== 'Pending'); // Only show evaluated ones
+
+    const resolved = records.filter(r => r.past_90);
+    const correct = records.filter(r => r.verdict === 'predicted_correct');
+    const wrong = records.filter(r => r.verdict === 'predicted_wrong');
+    const pending = records.filter(r => r.verdict === 'pending');
+    const savedActive = records.filter(r => r.verdict === 'saved_active');
+
+    const overall_accuracy = resolved.length > 0 ? Math.round((correct.length / resolved.length) * 100) : 0;
+
+    // By program
+    const programMap = {};
+    resolved.forEach(r => {
+      const prog = r.program || 'No Program';
+      if (!programMap[prog]) programMap[prog] = { program: prog, resolved: 0, correct: 0 };
+      programMap[prog].resolved++;
+      if (r.verdict === 'predicted_correct') programMap[prog].correct++;
+    });
+    const by_program = Object.values(programMap).sort((a, b) => b.resolved - a.resolved);
+
+    // By month
+    const monthMap = {};
+    resolved.forEach(r => {
+      if (!r.date) return;
+      const m = r.date.slice(0, 7);
+      if (!monthMap[m]) monthMap[m] = { month: m, total: 0, correct: 0 };
+      monthMap[m].total++;
+      if (r.verdict === 'predicted_correct') monthMap[m].correct++;
+    });
+    const by_month = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month)).slice(-12);
+
+    res.json({
+      overall_accuracy,
+      total_resolved: resolved.length,
+      total_correct: correct.length,
+      total_wrong: wrong.length,
+      total_pending: pending.length,
+      total_saved_active: savedActive.length,
+      by_program,
+      by_month,
+      records: records.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    });
+  } catch (err) {
+    console.error('[cris-accuracy]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Serve React frontend (MUST be last) ──────────────────────────────────
 app.use(express.static(path.join(__dirname, '../build')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../build', 'index.html')));
