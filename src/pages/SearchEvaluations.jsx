@@ -214,7 +214,7 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
         setPage('report');
       } else {
         setActiveEvalId(row.Evaluation_ID);
-        alert('This evaluation has not been analyzed yet. Open in New Evaluation to run analysis.');
+        alert('This cancellation has not been analyzed yet. Open in New Cancellation Request to run analysis.');
       }
     } catch (e) {
       alert('Error loading evaluation: ' + e.message);
@@ -237,7 +237,7 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
               value={filters.client_name}
               onChange={set('client_name')}
             />
-            <Input label="Evaluation ID" value={filters.evaluation_id} onChange={set('evaluation_id')} placeholder="CRIS-..." />
+            <Input label="Cancellation ID" value={filters.evaluation_id} onChange={set('evaluation_id')} placeholder="CRIS-..." />
             {/* Staff Member — pre-filled from logged-in user, still editable */}
             <div>
               <Input
@@ -247,7 +247,7 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
                 placeholder="Staff name..."
               />
               {currentUser?.username && filters.staff_name === currentUser.username && (
-                <p className="text-xs text-blue-500 mt-1">Showing your evaluations · <button className="underline" onClick={() => set('staff_name')('')}>Clear to see all</button></p>
+                <p className="text-xs text-blue-500 mt-1">Showing your cancellations · <button className="underline" onClick={() => set('staff_name')('')}>Clear to see all</button></p>
               )}
             </div>
             <Select label="Status" value={filters.status} onChange={set('status')} options={[
@@ -283,7 +283,7 @@ export default function SearchEvaluations({ setPage, setActiveAnalysis, setActiv
       {loading ? (
         <div className="flex justify-center py-12"><Spinner size="lg" /></div>
       ) : searched && results.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">No evaluations found matching your criteria.</div>
+        <div className="text-center py-12 text-gray-500">No cancellations found matching your criteria.</div>
       ) : (
         <div className="space-y-3">
           {results.map(row => {

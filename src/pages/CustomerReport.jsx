@@ -121,7 +121,7 @@ export default function CustomerReport({ setPage, setActiveAnalysis, setActiveEv
               style={{ width: '100%', paddingLeft: 32, paddingRight: 10, paddingTop: 8, paddingBottom: 8, fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', outline: 'none', boxSizing: 'border-box' }}
             />
           </div>
-          <p style={{ fontSize: 11, color: '#94a3b8', margin: '8px 0 0' }}>{filtered.length} evaluation{filtered.length !== 1 ? 's' : ''}</p>
+          <p style={{ fontSize: 11, color: '#94a3b8', margin: '8px 0 0' }}>{filtered.length} cancellation{filtered.length !== 1 ? 's' : ''}</p>
         </div>
 
         {/* List */}

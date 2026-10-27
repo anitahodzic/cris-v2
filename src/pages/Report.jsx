@@ -126,8 +126,8 @@ export default function Report({ activeAnalysis, setPage }) {
       <div className="max-w-3xl mx-auto px-4 py-16 text-center">
         <div className="text-4xl mb-4">⊙</div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">No Report Loaded</h2>
-        <p className="text-gray-500 mb-6">Run an AI analysis from the New Evaluation page to see the Cancellation Decision Report.</p>
-        <Btn onClick={() => setPage('new-evaluation')} variant="primary">Start New Evaluation</Btn>
+        <p className="text-gray-500 mb-6">Run an AI analysis from the New Cancellation Request page to see the Cancellation Decision Report.</p>
+        <Btn onClick={() => setPage('new-evaluation')} variant="primary">Start New Cancellation Request</Btn>
       </div>
     );
   }

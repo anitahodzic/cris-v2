@@ -32,14 +32,6 @@ function StatCard({ label, value, sub, color, icon, loading }) {
   );
 }
 
-function RiskTierBadge({ tier }) {
-  if (!tier) return null;
-  const t = (tier || '').toLowerCase();
-  if (t === 'critical' || t === 'high')    return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">🔴 {tier}</span>;
-  if (t === 'medium' || t === 'moderate') return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">🟡 {tier}</span>;
-  if (t === 'low')                         return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">🟢 {tier}</span>;
-  return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-600">{tier}</span>;
-}
 
 export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
   const [stats, setStats] = useState(null);
@@ -59,11 +51,6 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
       .then(d => { setRiskData(d); setRiskLoading(false); })
       .catch(() => { setRiskLoading(false); });
   }, []);
-
-  const topAtRisk = (riskData?.clients || [])
-    .filter(c => c.risk_score >= 40)
-    .sort((a, b) => b.risk_score - a.risk_score)
-    .slice(0, 8);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -85,9 +72,9 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
 
       {/* Stat Cards Row 1 — this month's CRIS activity */}
       <div className="mb-3">
-        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">This Month — Evaluation Activity</div>
+        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">This Month — Cancellation Activity</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Evaluations" value={stats?.total_evaluations} sub="started this month" color="blue" icon="📋" loading={loading} />
+          <StatCard label="Cancellations" value={stats?.total_evaluations} sub="logged this month" color="blue" icon="📋" loading={loading} />
           <StatCard label="Clients Saved" value={stats?.saved} sub="retained this month" color="green" icon="✓" loading={loading} />
           <StatCard label="Cancelled" value={stats?.cancelled} sub="lost this month" color="red" icon="✗" loading={loading} />
           <StatCard label="Revenue Saved" value={stats?.revenue_saved != null ? `$${Math.round(stats.revenue_saved).toLocaleString()}` : null} sub="this month" color="purple" icon="💰" loading={loading} />
@@ -106,76 +93,39 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
         </div>
       </div>
 
-      {/* Top Action Required Table */}
+      {/* Bottom Panel */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="xl:col-span-2 space-y-4">
+          {/* Risk summary card */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="font-bold text-gray-900 text-base">🎯 Top Action Required</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Clients at highest cancellation risk — prioritize outreach</p>
+                <h2 className="font-bold text-gray-900 text-base">⚠️ Client Risk Summary</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Current risk distribution across all active clients</p>
               </div>
               <button
                 onClick={() => setPage('at-risk')}
                 className="text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
               >
-                View All →
+                View At-Risk Clients →
               </button>
             </div>
             {riskLoading ? (
-              <div className="p-8 text-center text-gray-400 text-sm animate-pulse">Scanning all clients…</div>
-            ) : topAtRisk.length === 0 ? (
-              <div className="p-8 text-center">
-                <img src="/mascot-thumbsup.png" alt="" className="w-16 mx-auto mb-3 opacity-60" />
-                <p className="text-gray-500 text-sm">No high-risk clients right now. Great work!</p>
-              </div>
+              <div className="text-center text-gray-400 text-sm animate-pulse py-4">Scanning all clients…</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Client</th>
-                      <th className="text-center px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Score</th>
-                      <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tier</th>
-                      <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Top Signal</th>
-                      <th className="text-center px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {topAtRisk.map((client, i) => (
-                      <tr key={i} className="hover:bg-blue-50/30 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="font-semibold text-gray-900 text-sm">{client.name}</div>
-                          {client.frequency && <div className="text-xs text-gray-400">{client.frequency}</div>}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`inline-block text-lg font-extrabold ${
-                            client.risk_score >= 60 ? 'text-red-600' :
-                            client.risk_score >= 40 ? 'text-orange-500' :
-                            client.risk_score >= 20 ? 'text-yellow-600' : 'text-green-600'
-                          }`}>
-                            {client.risk_score}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3">
-                          <RiskTierBadge tier={client.risk_tier} />
-                        </td>
-                        <td className="px-3 py-3 hidden md:table-cell">
-                          <span className="text-xs text-gray-600">{client.top_signal || '—'}</span>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <button
-                            onClick={() => setPage('at-risk')}
-                            className="text-xs font-semibold text-white px-3 py-1.5 rounded-lg transition-all"
-                            style={{ background: 'linear-gradient(90deg, #1d4ed8, #2563eb)', boxShadow: '0 1px 4px rgba(37,99,235,0.3)' }}
-                          >
-                            Review
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'High Risk', value: riskData?.high_risk, color: 'text-red-600', bg: 'bg-red-50', icon: '🔴' },
+                  { label: 'Medium Risk', value: riskData?.medium_risk, color: 'text-orange-500', bg: 'bg-orange-50', icon: '🟡' },
+                  { label: 'Low Risk', value: riskData?.low_risk, color: 'text-yellow-600', bg: 'bg-yellow-50', icon: '🟢' },
+                  { label: 'Very Low Risk', value: riskData?.very_low_risk, color: 'text-green-600', bg: 'bg-green-50', icon: '⭐' },
+                ].map(item => (
+                  <div key={item.label} className={`${item.bg} rounded-xl p-3 text-center`}>
+                    <div className="text-lg mb-1">{item.icon}</div>
+                    <div className={`text-2xl font-extrabold ${item.color}`}>{item.value ?? '—'}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{item.label}</div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -188,7 +138,7 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
             <h3 className="font-bold text-gray-800 text-sm mb-3">Quick Actions</h3>
             <div className="space-y-2">
               {[
-                { label: 'New Client Evaluation', icon: '+', page: 'new-evaluation', color: '#1d4ed8' },
+                { label: 'New Cancellation Request', icon: '+', page: 'new-evaluation', color: '#1d4ed8' },
                 { label: 'Ask CRIS a Question', icon: '✦', page: 'ai-chat', color: '#7c3aed' },
                 { label: 'View At-Risk Clients', icon: '⚠', page: 'at-risk', color: '#dc2626' },
                 { label: 'Monthly Report', icon: '↑', page: 'monthly-report', color: '#16a34a' },
@@ -220,7 +170,7 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
                 <span className="font-bold text-yellow-800 text-sm">Pending Follow-Up</span>
               </div>
               <div className="text-2xl font-extrabold text-yellow-700">{stats.pending}</div>
-              <div className="text-xs text-yellow-600 mt-0.5">evaluations need attention</div>
+              <div className="text-xs text-yellow-600 mt-0.5">cancellations need attention</div>
               <button
                 onClick={() => setPage('search')}
                 className="mt-3 text-xs font-semibold text-yellow-800 hover:text-yellow-900 underline"

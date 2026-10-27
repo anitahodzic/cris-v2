@@ -85,7 +85,7 @@ function MonthlyAccuracyChart({ months }) {
             </span>
             <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:flex bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 flex-col gap-0.5">
               <span className="font-semibold">{m.month}</span>
-              <span>{m.total} evaluations resolved</span>
+              <span>{m.total} cancellations resolved</span>
               <span className="text-green-300">{m.correct} correct predictions</span>
               <span className="font-bold">{accuracyPct}% accuracy</span>
             </div>
@@ -232,7 +232,7 @@ export default function CRISvsData() {
               );
             })}
           </div>
-          <p className="text-xs text-gray-400 mt-3">% = correct predictions among resolved evaluations per program</p>
+          <p className="text-xs text-gray-400 mt-3">% = correct predictions among resolved cancellations per program</p>
         </div>
       )}
 
@@ -316,7 +316,7 @@ export default function CRISvsData() {
                       {r.outcome && <p className="text-xs text-gray-400 mt-1">{r.outcome}</p>}
                       {r.days_since != null && (
                         <p className="text-xs text-gray-400 mt-0.5">
-                          {r.days_since < 90 ? `${90 - r.days_since} days remaining in window` : `${r.days_since} days since evaluation`}
+                          {r.days_since < 90 ? `${90 - r.days_since} days remaining in window` : `${r.days_since} days since cancellation`}
                         </p>
                       )}
                     </div>
@@ -337,7 +337,7 @@ export default function CRISvsData() {
       <p className="text-xs text-gray-400 pb-4">
         A prediction is considered <strong>correct</strong> if the client remains active 90 days after an L2 ticket or Care Focus intervention.
         <strong> Wrong</strong> = client cancelled within 90 days despite intervention.
-        <strong> Pending</strong> = less than 90 days have elapsed since the evaluation.
+        <strong> Pending</strong> = less than 90 days have elapsed since the cancellation was logged.
       </p>
     </div>
   );

@@ -33,7 +33,7 @@ export default function TechnicianReport() {
   if (error) return (
     <div className="p-8 text-center">
       <div className="text-red-500 mb-2">{error}</div>
-      <p className="text-sm text-gray-500">This report requires Technician History to be pasted into evaluations. If no evaluations have technician data yet, this report will be empty.</p>
+      <p className="text-sm text-gray-500">This report requires Technician History to be pasted into cancellation requests. If no cancellations have technician data yet, this report will be empty.</p>
     </div>
   );
 
@@ -58,7 +58,7 @@ export default function TechnicianReport() {
         <h1 className="text-2xl font-bold text-gray-900">Cancellations by Technician</h1>
         <p className="text-sm text-gray-500 mt-1">
           Which technicians appeared most often as the last cleaner before a client cancelled.
-          Based on {total_evaluations} evaluations, {total_cancelled} cancelled.
+          Based on {total_evaluations} cancellation requests, {total_cancelled} cancelled.
         </p>
       </div>
 
@@ -249,7 +249,7 @@ export default function TechnicianReport() {
 
           <p className="text-xs text-gray-400 mt-4">
             * "Last cleaner" = first technician listed in the Technician History paste (most recent job).
-            This data requires technician history to be pasted into the evaluation form.
+            This data requires technician history to be pasted into the cancellation request form.
             High-risk flag = ≥3 jobs as last cleaner and &gt;40% cancellation rate.
           </p>
         </>

@@ -9,7 +9,7 @@ const RISK_SCAN_STEPS = [
   [600,  12, 'Loading active clients from Drive…'],
   [1200, 28, 'Loading scorecard data…'],
   [2000, 45, 'Loading cancelled client history…'],
-  [2800, 60, 'Checking evaluation pipeline…'],
+  [2800, 60, 'Checking cancellation pipeline…'],
   [3600, 74, 'Scoring clients by risk signals…'],
   [4400, 86, 'Ranking by risk level…'],
   [5200, 94, 'Almost done…'],
@@ -56,13 +56,14 @@ function CareFocusModal({ client, currentUser, existing, onSave, onClose }) {
   const [notes, setNotes] = useState(existing?.notes || '');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const [mcStatus, setMcStatus] = useState(null);
 
   const handleSave = async () => {
     setSaving(true);
     setErr('');
     try {
       if (existing) {
-        // Update existing record
+        // Update existing record (no new MC ticket)
         const res = await fetch(`${BASE}/api/care-focus/${encodeURIComponent(client.name)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -71,7 +72,31 @@ function CareFocusModal({ client, currentUser, existing, onSave, onClose }) {
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Update failed');
       } else {
-        // Create new record
+        // Create L1 MC ticket automatically
+        const reason = client.signals?.[0] || 'At-risk client — schedule care focus';
+        try {
+          const mcRes = await fetch(`${BASE}/api/mc/create-note`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              client_name: client.name,
+              level: 1,
+              reason,
+              details: client.signals?.slice(1).join('; ') || '',
+              create_ticket: true,
+            }),
+          });
+          const mcData = await mcRes.json();
+          if (mcRes.status === 409) setMcStatus('duplicate');
+          else if (mcRes.status === 404) setMcStatus('no_email');
+          else if (!mcData.ok) setMcStatus('error');
+          else setMcStatus('created');
+        } catch (mcErr) {
+          setMcStatus('error');
+          console.warn('[CFModal] MC L1 ticket failed:', mcErr.message);
+        }
+
+        // Log to CRIS Care Focus regardless
         const res = await fetch(`${BASE}/api/care-focus`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -106,8 +131,18 @@ function CareFocusModal({ client, currentUser, existing, onSave, onClose }) {
         </div>
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#166534', lineHeight: 1.6 }}>
-            A Care Focus means the cleaning team gives this client extra attention on their next visit — a check-in, a personal note, or a small gesture to show they're valued.
+            Scheduling a Care Focus automatically creates an L1 ticket in MaidCentral and logs it in CRIS. The cleaning team gives this client extra attention on their next visit.
           </div>
+          {mcStatus === 'duplicate' && (
+            <div style={{ background: '#fef9c3', border: '1px solid #fde047', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#713f12' }}>
+              ⚠ An L1 ticket for <strong>{client.name}</strong> already exists within 90 days. Care Focus logged in CRIS — no duplicate MC ticket created.
+            </div>
+          )}
+          {mcStatus === 'no_email' && (
+            <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#7f1d1d' }}>
+              ⚠ No email found for <strong>{client.name}</strong> in MaidCentral. Care Focus logged in CRIS — please create the L1 ticket manually.
+            </div>
+          )}
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
               Scheduled Date <span style={{ fontWeight: 400, color: '#94a3b8' }}>(next cleaning date)</span>
@@ -664,11 +699,13 @@ export default function AtRiskClients({ currentUser }) {
   };
 
   // Top 25 with cooldown applied — skip clients on 90-day cooldown, fill slots from next in line
-  const eligibleForL2 = enriched.filter(c => !hasRecentL2(c.name));
-  const eligibleForCf = enriched.filter(c => !hasRecentL2(c.name) && !hasRecentCf(c.name));
+  // Top 10: HIGH RISK only, sorted by score desc → get L2 phone calls
+  const eligibleForL2 = enriched.filter(c => c.effective_tier === 'High' && !hasRecentL2(c.name));
+  // Next 15: non-High risk (Medium/Low/Very Low), no recent L1 → get L1 Care Focus ticket
+  const eligibleForCf = enriched.filter(c => c.effective_tier !== 'High' && !hasRecentL2(c.name) && !hasRecentCf(c.name));
 
-  const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls
-  const next15 = eligibleForCf               // → Care Focus (skip anyone already in top10)
+  const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls (High risk only)
+  const next15 = eligibleForCf               // → L1 Care Focus (lower risk tiers, skip anyone already in top10)
     .filter(c => !top10.find(t => t.name === c.name))
     .slice(0, 15);
   const top25 = [...top10, ...next15];

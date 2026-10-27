@@ -242,7 +242,7 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">New Cancellation Request</h1>
         <p className="text-gray-500 mt-1">Enter the client name and cancellation reason — CRIS pulls the rest from MaidCentral automatically.</p>
-        {evalId && <p className="text-xs text-blue-600 mt-2 font-mono">Evaluation ID: {evalId}</p>}
+        {evalId && <p className="text-xs text-blue-600 mt-2 font-mono">Cancellation ID: {evalId}</p>}
       </div>
 
       {error && <Alert type="error" onClose={() => setError(null)} className="mb-4">{error}</Alert>}
@@ -255,7 +255,7 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
         </CardHeader>
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="Evaluation Date" value={form.created_date?.split('T')[0]} onChange={(v) => setForm(f => ({ ...f, created_date: v }))} type="date" />
+            <Input label="Cancellation Date" value={form.created_date?.split('T')[0]} onChange={(v) => setForm(f => ({ ...f, created_date: v }))} type="date" />
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Staff Member Name <span className="text-red-500">*</span></label>
               <Input value={form.staff_name} onChange={set('staff_name')} placeholder="Your name" required />
@@ -315,7 +315,7 @@ export default function NewEvaluation({ setPage, setActiveEvalId, setActiveAnaly
             {analyzing ? <><Spinner size="sm" /> Analyzing with AI...</> : '⊙ Analyze Client'}
           </Btn>
           <Btn onClick={handleSave} disabled={saving || analyzing} variant="secondary" size="lg">
-            {saving ? <><Spinner size="sm" /> Saving...</> : 'Save Evaluation'}
+            {saving ? <><Spinner size="sm" /> Saving...</> : 'Save Cancellation'}
           </Btn>
           <Btn onClick={handleClear} variant="ghost" size="lg">Clear Form</Btn>
         </div>

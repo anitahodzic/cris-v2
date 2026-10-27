@@ -95,7 +95,7 @@ export default function MonthlyReport() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* KPI tiles */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-            <Tile icon="📋" label="Total Evaluations" value={data.total_evaluations || 0} accent="#1d4ed8" light="#eff6ff" />
+            <Tile icon="📋" label="Total Cancellations" value={data.total_evaluations || 0} accent="#1d4ed8" light="#eff6ff" />
             <Tile icon="✅" label="Clients Saved" value={data.by_outcome?.Saved || 0} accent="#16a34a" light="#f0fdf4" />
             <Tile icon="❌" label="Cancelled" value={data.by_outcome?.Cancelled || 0} accent="#dc2626" light="#fef2f2" />
             <Tile icon="📈" label="Save Rate" value={`${saveRate}%`} accent={rateColor} light={saveRate >= 60 ? '#f0fdf4' : saveRate >= 40 ? '#fffbeb' : '#fef2f2'} />

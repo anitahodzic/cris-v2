@@ -241,9 +241,9 @@ export default function CTPerformance() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'CTs Tracked', value: techs.length, color: 'text-gray-800', sub: 'from evaluations' },
+          { label: 'CTs Tracked', value: techs.length, color: 'text-gray-800', sub: 'from cancellations' },
           { label: 'High Risk', value: highRisk.length, color: 'text-red-600', sub: '≥8 pts · 3+ clients' },
-          { label: 'Total Cancelled', value: total_cancelled, color: 'text-red-500', sub: `of ${total_evaluations} evals` },
+          { label: 'Total Cancelled', value: total_cancelled, color: 'text-red-500', sub: `of ${total_evaluations} logged` },
           { label: 'Dispatch Data', value: has_dispatch_data ? '✓' : '✗', color: has_dispatch_data ? 'text-green-600' : 'text-gray-400', sub: 'visit history' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
@@ -405,7 +405,7 @@ export default function CTPerformance() {
       </div>
 
       <p className="text-xs text-gray-400 pb-4">
-        Risk score = sum of weighted positions across all evaluations where this CT appeared (last cleaner = 3 pts, 2nd = 2 pts, 3rd = 1 pt).
+        Risk score = sum of weighted positions across all cancellations where this CT appeared (last cleaner = 3 pts, 2nd = 2 pts, 3rd = 1 pt).
         Cancel rate = percentage of clients where this CT appeared who cancelled.
         Scores from dispatch board reflect all-time client history, not just cancellations.
       </p>

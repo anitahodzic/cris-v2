@@ -94,7 +94,7 @@ function MonthlyChart({ monthly }) {
             {/* Tooltip */}
             <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:flex bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 flex-col gap-0.5">
               <span className="font-semibold">{m.month}</span>
-              <span>{m.total} evaluations</span>
+              <span>{m.total} cancellations</span>
               <span className="text-red-300">{m.cancelled} cancelled</span>
               <span className="text-green-300">{m.saved} saved</span>
               {m.top_driver && <span className="text-blue-300">Top: {m.top_driver}</span>}
@@ -316,7 +316,7 @@ export default function CancellationDrivers() {
                 <span className="text-purple-500 text-lg mt-0.5">⚡</span>
                 <div>
                   <div className="text-sm font-semibold text-purple-800">
-                    {mismatched.length} evaluation{mismatched.length !== 1 ? 's' : ''} where stated reason didn't match AI finding
+                    {mismatched.length} cancellation{mismatched.length !== 1 ? 's' : ''} where stated reason didn't match AI finding
                   </div>
                   <p className="text-xs text-purple-600 mt-1">
                     These clients may not have shared the real reason. Review them in All Records to identify hidden patterns.
