@@ -2012,9 +2012,284 @@ app.get('/api/cris-accuracy', async (req, res) => {
   }
 });
 
+// ─── MaidCentral API helpers ──────────────────────────────────────────────
+const MC_API_BASE  = process.env.MC_API_BASE_URL   || 'https://api.maidcentral.com';
+const MC_USERNAME  = process.env.MC_API_USERNAME;
+const MC_PASSWORD  = process.env.MC_API_PASSWORD;
+
+let _mcToken = null;
+let _mcTokenExpiry = 0;
+
+async function getMCToken() {
+  if (_mcToken && Date.now() < _mcTokenExpiry - 60_000) return _mcToken;
+  if (!MC_USERNAME || !MC_PASSWORD) throw new Error('MC_API_USERNAME / MC_API_PASSWORD env vars not set');
+
+  const params = new URLSearchParams({
+    grant_type: 'password',
+    username: MC_USERNAME,
+    password: MC_PASSWORD,
+  });
+  const resp = await fetch(`${MC_API_BASE}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  if (!resp.ok) throw new Error(`MC /token failed: ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  _mcToken = data.access_token;
+  _mcTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+  return _mcToken;
+}
+
+async function createMCNote({ email, noteText, createTicket = false }) {
+  const token = await getMCToken();
+  const body = {
+    EntityTypeId: 1,            // Customer
+    EntityContactInfo: email,   // MC resolves customer by email
+    NoteTypeId: 2,              // Note
+    CommunicationDirectionId: 0, // InternalNote
+    NoteText: noteText,
+    CreateTicket: createTicket,
+  };
+  const resp = await fetch(`${MC_API_BASE}/api/Note/Create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`MC Note/Create failed: ${resp.status} ${await resp.text()}`);
+  return resp.json();
+}
+
+// ─── MC: create note for at-risk client ──────────────────────────────────
+// POST /api/mc/create-note  { client_name, risk_summary, create_ticket? }
+app.post('/api/mc/create-note', async (req, res) => {
+  try {
+    const { client_name, risk_summary, create_ticket = false } = req.body || {};
+    if (!client_name) return res.status(400).json({ error: 'client_name required' });
+
+    // Look up customer email from Drive current-customers CSV
+    const { rows: customers } = await cachedDriveCSV(DRIVE_FOLDER_CUSTOMERS);
+    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetName = normalize(client_name);
+
+    // Try full match first, then last-name only as fallback
+    let customer = customers.find(c => {
+      const full = normalize(`${c['First'] || ''} ${c['Last'] || ''}`);
+      return full === targetName;
+    });
+    if (!customer) {
+      // Last name match
+      const parts = client_name.trim().split(/\s+/);
+      const lastName = normalize(parts[parts.length - 1]);
+      customer = customers.find(c => normalize(c['Last'] || '') === lastName);
+    }
+
+    const email = customer?.['Email'];
+    if (!email) {
+      return res.status(404).json({
+        error: `No email found for client "${client_name}" in current-customers CSV`,
+        tip: 'Customer may not be in the active list, or the CSV may be outdated',
+      });
+    }
+
+    const noteText = risk_summary
+      ? `⚠️ CRIS At-Risk Alert — ${client_name}\n\n${risk_summary}\n\n(Note created automatically by CRIS)`
+      : `⚠️ CRIS flagged ${client_name} as at-risk. Please review in CRIS for details.`;
+
+    const result = await createMCNote({ email, noteText, createTicket: create_ticket });
+    res.json({ ok: true, email, mc_response: result });
+  } catch (err) {
+    console.error('[mc/create-note]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Auto-close: GET status of last auto-close run ───────────────────────
+// Returns recent auto-closed evaluations so the dashboard can show a banner
+app.get('/api/auto-close/recent', async (req, res) => {
+  try {
+    const sheets = await getSheets();
+    const outcomes = await readTab(sheets, 'Outcomes');
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const recent = outcomes.filter(o =>
+      o['Outcome'] === 'Cancelled' &&
+      (o['Outcome_Notes'] || '').includes('auto closed by CRIS') &&
+      (o['Closed_Date'] || '') >= cutoff
+    );
+    res.json({ count: recent.length, items: recent });
+  } catch (err) {
+    console.error('[auto-close/recent]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Auto-close core logic ────────────────────────────────────────────────
+async function runAutoClose() {
+  console.log('[auto-close] Starting auto-close run at', new Date().toISOString());
+
+  const sheets = await getSheets();
+
+  // 1. Load active cancelled clients from Drive job-status CSV
+  const { rows: jobRows, filename } = await getLatestDriveCSV(DRIVE_FOLDER_JOBSTATUS);
+  console.log(`[auto-close] Loaded ${jobRows.length} job rows from ${filename}`);
+
+  // Build a Set of customer names whose ALL future jobs are cancelled
+  // "Cancelled" status from the job-status report means the service was cancelled
+  const cancelledCustomers = new Set();
+  const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Group by customer — if a customer appears only with Cancelled status, they're cancelled
+  const customerStatuses = {};
+  for (const row of jobRows) {
+    const name = normalize(row['Customer Name'] || row['Customer'] || '');
+    if (!name) continue;
+    if (!customerStatuses[name]) customerStatuses[name] = new Set();
+    const status = (row['Status'] || '').toLowerCase();
+    customerStatuses[name].add(status);
+  }
+
+  for (const [name, statuses] of Object.entries(customerStatuses)) {
+    const hasNonCancelled = [...statuses].some(s => !['cancelled', 'bumped', 'moved'].includes(s));
+    if (!hasNonCancelled) cancelledCustomers.add(name);
+  }
+  console.log(`[auto-close] ${cancelledCustomers.size} customers fully cancelled in job-status`);
+
+  // 2. Load CRIS Outcomes + Intakes
+  const [intakes, outcomes] = await Promise.all([
+    readTab(sheets, 'Client_Intake'),
+    readTab(sheets, 'Outcomes'),
+  ]);
+
+  // Get spreadsheet metadata to find the Outcomes sheet ID and row positions
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const outcomesSheet = meta.data.sheets?.find(s => s.properties.title === 'Outcomes');
+  const outcomesSheetId = outcomesSheet?.properties?.sheetId;
+
+  // Build a map of eval_id → row index in Outcomes (1-indexed, row 1 = header)
+  const outcomesByEvalId = {};
+  outcomes.forEach((row, i) => {
+    const id = row['Evaluation_ID'] || row['Eval_ID'];
+    if (id) outcomesByEvalId[id] = { row: i + 2, data: row }; // +2 for header
+  });
+
+  // Build a map of eval_id → intake row
+  const intakeByEvalId = {};
+  intakes.forEach(row => {
+    const id = row['Eval_ID'] || row['Evaluation_ID'];
+    if (id) intakeByEvalId[id] = row;
+  });
+
+  const autoCloseNote = 'auto closed by CRIS because all future jobs were cancelled in MaidCentral';
+  const closedAt = new Date().toISOString().slice(0, 10);
+  const updates = [];
+
+  for (const [evalId, { row, data }] of Object.entries(outcomesByEvalId)) {
+    const status = (data['Outcome'] || '').toLowerCase();
+    if (status !== 'pending' && status !== 'saved') continue;
+
+    // Find client name from intake
+    const intake = intakeByEvalId[evalId];
+    const clientName = intake?.['Client_Name'] || data['Client_Name'] || data['client_name'] || '';
+    const normalizedClient = normalize(clientName);
+
+    if (!cancelledCustomers.has(normalizedClient)) continue;
+
+    console.log(`[auto-close] Will close eval ${evalId} for client "${clientName}" (row ${row})`);
+    updates.push({ evalId, row, clientName, prevStatus: data['Outcome'] });
+  }
+
+  if (updates.length === 0) {
+    console.log('[auto-close] No evaluations to auto-close today');
+    return { closed: 0, skipped: 0, details: [] };
+  }
+
+  // 3. Batch-update Outcomes sheet
+  // Find column indices for Outcome, Outcome_Notes, Closed_Date
+  const outcomesRes = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'Outcomes!1:1' });
+  const headers = outcomesRes.data.values?.[0] || [];
+  const colIdx = name => headers.indexOf(name); // 0-based
+  const outcomeCol = colIdx('Outcome');
+  const notesCol   = colIdx('Outcome_Notes');
+  const closedCol  = colIdx('Closed_Date');
+
+  const batchData = [];
+  for (const u of updates) {
+    const colLetter = col => String.fromCharCode(65 + col);
+    if (outcomeCol >= 0) {
+      batchData.push({ range: `Outcomes!${colLetter(outcomeCol)}${u.row}`, values: [['Cancelled']] });
+    }
+    if (notesCol >= 0) {
+      batchData.push({ range: `Outcomes!${colLetter(notesCol)}${u.row}`, values: [[autoCloseNote]] });
+    }
+    if (closedCol >= 0) {
+      batchData.push({ range: `Outcomes!${colLetter(closedCol)}${u.row}`, values: [[closedAt]] });
+    }
+  }
+
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: batchData },
+    });
+  }
+
+  console.log(`[auto-close] Closed ${updates.length} evaluations`);
+  return { closed: updates.length, skipped: 0, details: updates.map(u => ({ evalId: u.evalId, clientName: u.clientName, prevStatus: u.prevStatus })) };
+}
+
+// ─── Auto-close: manual trigger (admin) ──────────────────────────────────
+app.post('/api/auto-close/run', async (req, res) => {
+  try {
+    const result = await runAutoClose();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[auto-close/run]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Auto-close: daily morning cron (7 AM Pacific) ───────────────────────
+// Node built-in: run once on startup if missed, then every day at 7 AM Pacific
+function scheduleDailyAutoClose() {
+  function msUntilNext7amPacific() {
+    // Pacific = UTC-8 (PST) or UTC-7 (PDT); use a fixed offset approximation
+    const now = new Date();
+    // Get current time in Pacific by computing the offset
+    const pacificOffset = -7; // PDT (daylight saving); -8 for PST
+    const pacificNow = new Date(now.getTime() + pacificOffset * 60 * 60 * 1000);
+    const target = new Date(pacificNow);
+    target.setUTCHours(7, 0, 0, 0); // 7 AM Pacific = 7 AM in our shifted time
+    if (target <= pacificNow) target.setUTCDate(target.getUTCDate() + 1);
+    return target.getTime() - pacificNow.getTime();
+  }
+
+  function scheduleNext() {
+    const ms = msUntilNext7amPacific();
+    const nextRun = new Date(Date.now() + ms);
+    console.log(`[auto-close] Next auto-close scheduled for ${nextRun.toISOString()} (in ${Math.round(ms / 60000)} min)`);
+    setTimeout(async () => {
+      try {
+        const result = await runAutoClose();
+        console.log('[auto-close] Daily run complete:', result);
+      } catch (err) {
+        console.error('[auto-close] Daily run error:', err);
+      }
+      scheduleNext(); // schedule the next day's run
+    }, ms);
+  }
+
+  scheduleNext();
+}
+
 // ─── Serve React frontend (MUST be last) ──────────────────────────────────
 app.use(express.static(path.join(__dirname, '../build')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../build', 'index.html')));
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`CRIS v2 running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`CRIS v2 running on port ${PORT}`);
+  scheduleDailyAutoClose();
+});
