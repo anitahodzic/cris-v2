@@ -1593,24 +1593,24 @@ app.get('/api/risk-scan', async (req, res) => {
           signals,  // all risk signals that fired, shown in UI
         };
       })
-      .sort((a, b) => a.risk_score - b.risk_score);
+      .sort((a, b) => b.risk_score - a.risk_score); // highest risk first
 
-    // Tiers (risk-UP scale: higher score = more risk)
-    // ≥60 = High, ≥40 = Medium, ≥20 = Low, <20 = Very Low
-    const high_risk   = clients.filter(c => c.risk_score >= 60).length;
-    const medium_risk = clients.filter(c => c.risk_score >= 40 && c.risk_score < 60).length;
-    const low_risk    = clients.filter(c => c.risk_score >= 20 && c.risk_score < 40).length;
-    const very_low    = clients.filter(c => c.risk_score < 20).length;
+    // Re-tier by rank: top 10 = "High" (→ L2 call), 11-25 = "Low" (→ L1 Care Focus)
+    // All others are tracked but not in the weekly action plan
+    const ranked = clients.map((c, i) => ({
+      ...c,
+      risk_tier: i < 10 ? 'High' : 'Low',
+    }));
 
     const result = {
-      total_clients: clients.length,
-      high_risk,
-      medium_risk,
-      low_risk,
-      very_low_risk: very_low,
+      total_active_clients: clients.length,
+      total_clients: clients.length, // keep for dashboard compat
+      high_risk: 10,   // always 10 (top scorers)
+      low_risk: Math.min(15, Math.max(0, clients.length - 10)), // up to 15
+      at_risk_count: Math.min(25, clients.length),
       scan_date: new Date().toISOString(),
       excluded_in_pipeline: openEvalNames.size,
-      clients,
+      clients: ranked,
     };
 
     riskScanCache.ts   = now;

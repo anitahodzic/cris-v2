@@ -698,27 +698,25 @@ export default function AtRiskClients({ currentUser }) {
     return isWithin90Days(rec.week_date);
   };
 
-  // Top 25 with cooldown applied — skip clients on 90-day cooldown, fill slots from next in line
-  // Top 10: HIGH RISK only, sorted by score desc → get L2 phone calls
-  const eligibleForL2 = enriched.filter(c => c.effective_tier === 'High' && !hasRecentL2(c.name));
-  // Next 15: non-High risk (Medium/Low/Very Low), no recent L1 → get L1 Care Focus ticket
-  const eligibleForCf = enriched.filter(c => c.effective_tier !== 'High' && !hasRecentL2(c.name) && !hasRecentCf(c.name));
+  // Server sends clients sorted by risk_score desc, with risk_tier already set:
+  // rank 1-10 = "High" (→ L2 phone call), rank 11+ = "Low" (→ L1 Care Focus)
+  // Apply cooldown: skip anyone on 90-day cooldown and fill from the next in line
 
-  const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls (High risk only)
-  const next15 = eligibleForCf               // → L1 Care Focus (lower risk tiers, skip anyone already in top10)
-    .filter(c => !top10.find(t => t.name === c.name))
-    .slice(0, 15);
-  const top25 = [...top10, ...next15];
+  const eligibleForL2 = enriched.filter(c => c.risk_tier === 'High' && !hasRecentL2(c.name));
+  const eligibleForCf = enriched.filter(c => c.risk_tier === 'Low' && !hasRecentL2(c.name) && !hasRecentCf(c.name));
+
+  const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls
+  const next15 = eligibleForCf.slice(0, 15);  // → L1 Care Focus
 
   // Weekly action plan progress
   const l2Done = top10.filter(c => hasL2(c.name)).length;
   const cfDone = next15.filter(c => getCfRecord(c.name)?.completed).length;
   const cfScheduled = next15.filter(c => getCfRecord(c.name) && !getCfRecord(c.name).completed).length;
 
-  const TABS = ['High', 'Medium', 'Low', 'Very Low', 'All'];
-  const countByTier = (tier) => enriched.filter(c => c.effective_tier === tier).length;
+  const TABS = ['High', 'Low', 'All'];
+  const countByTier = (tier) => enriched.filter(c => c.risk_tier === tier).length;
   const displayed = enriched.filter(c => {
-    if (filter !== 'All' && c.effective_tier !== filter) return false;
+    if (filter !== 'All' && c.risk_tier !== filter) return false;
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
@@ -841,8 +839,11 @@ export default function AtRiskClients({ currentUser }) {
       {view === 'all' && (
         <>
           {/* Tier summary tiles */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 20 }}>
-            {['High', 'Medium', 'Low', 'Very Low'].map(tier => {
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 20 }}>
+            {[
+              { tier: 'High', label: 'High Risk — L2 Call', sub: 'Top 10 scorers → phone call this week' },
+              { tier: 'Low',  label: 'Low Risk — L1 Care Focus', sub: 'Next 15 scorers → care focus visit' },
+            ].map(({ tier, label, sub }) => {
               const s = TIER_STYLE[tier];
               const count = countByTier(tier);
               return (
@@ -853,9 +854,10 @@ export default function AtRiskClients({ currentUser }) {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <TierDot tier={tier} />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: s.color }}>{tier} Risk</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: s.color }}>{label}</span>
                   </div>
                   <div style={{ fontSize: 28, fontWeight: 800, color: s.color, lineHeight: 1 }}>{count}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{sub}</div>
                 </div>
               );
             })}

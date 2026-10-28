@@ -83,13 +83,12 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
 
       {/* Stat Cards Row 2 — Proactive Risk Scan */}
       <div className="mb-7">
-        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 mt-6">Proactive Risk Scan — All Active Clients</div>
+        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 mt-6">Proactive Risk Tracker — Weekly Action Plan</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Total Clients" value={riskData?.total_clients} sub="active in MaidCentral" color="blue" icon="👥" loading={riskLoading} />
-          <StatCard label="High Risk" value={riskData?.high_risk} sub="no scorecards or 2+ skips" color="red" icon="🚨" loading={riskLoading} />
-          <StatCard label="Medium Risk" value={riskData?.medium_risk} sub="occasional skips or low feedback" color="yellow" icon="⚠️" loading={riskLoading} />
-          <StatCard label="Low Risk" value={riskData?.low_risk} sub="minor gaps or infrequent issues" color="orange" icon="📋" loading={riskLoading} />
-          <StatCard label="Very Low Risk" value={riskData?.very_low_risk} sub="consistent feedback & attendance" color="green" icon="⭐" loading={riskLoading} />
+          <StatCard label="Active Clients" value={riskData?.total_active_clients} sub="total in MaidCentral" color="blue" icon="👥" loading={riskLoading} />
+          <StatCard label="At Risk This Week" value={riskData?.at_risk_count} sub="max 25 per weekly plan" color="red" icon="🚨" loading={riskLoading} />
+          <StatCard label="L2 Calls (High)" value={riskData?.high_risk} sub="top 10 highest risk → phone call" color="red" icon="📞" loading={riskLoading} />
+          <StatCard label="L1 Care Focus" value={riskData?.low_risk} sub="next 15 → schedule care focus" color="green" icon="🌟" loading={riskLoading} />
         </div>
       </div>
 
@@ -115,10 +114,10 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
-                  { label: 'High Risk', value: riskData?.high_risk, color: 'text-red-600', bg: 'bg-red-50', icon: '🔴' },
-                  { label: 'Medium Risk', value: riskData?.medium_risk, color: 'text-orange-500', bg: 'bg-orange-50', icon: '🟡' },
-                  { label: 'Low Risk', value: riskData?.low_risk, color: 'text-yellow-600', bg: 'bg-yellow-50', icon: '🟢' },
-                  { label: 'Very Low Risk', value: riskData?.very_low_risk, color: 'text-green-600', bg: 'bg-green-50', icon: '⭐' },
+                  { label: 'L2 Calls (High)', value: riskData?.high_risk, color: 'text-red-600', bg: 'bg-red-50', icon: '📞' },
+                  { label: 'L1 Care Focus', value: riskData?.low_risk, color: 'text-green-600', bg: 'bg-green-50', icon: '🌟' },
+                  { label: 'At Risk Total', value: riskData?.at_risk_count, color: 'text-blue-600', bg: 'bg-blue-50', icon: '⚠️' },
+                  { label: 'All Active', value: riskData?.total_active_clients, color: 'text-gray-600', bg: 'bg-gray-50', icon: '👥' },
                 ].map(item => (
                   <div key={item.label} className={`${item.bg} rounded-xl p-3 text-center`}>
                     <div className="text-lg mb-1">{item.icon}</div>
