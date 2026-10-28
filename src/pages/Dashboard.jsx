@@ -1,44 +1,124 @@
 import React, { useState, useEffect } from 'react';
 
-const BASE = process.env.REACT_APP_API_URL || '';
+// ── BAHC brand tokens ─────────────────────────────────────────────────────────
+const B = {
+  blue:      '#1B5EA0',
+  blueMid:   '#2774B8',
+  blueLight: '#EBF3FB',
+  bluePale:  '#F0F7FF',
+  green:     '#2A8C5A',
+  greenMid:  '#38A169',
+  greenLight:'#EBF7F1',
+  greenPale: '#F0FDF4',
+  red:       '#DC2626',
+  redLight:  '#FEF2F2',
+  amber:     '#D97706',
+  amberLight:'#FFFBEB',
+  slate:     '#0F172A',
+  muted:     '#64748B',
+  border:    '#E2E8F0',
+  bg:        '#F8FAFC',
+  white:     '#FFFFFF',
+};
 
-function StatCard({ label, value, sub, color, icon, loading }) {
-  const colors = {
-    blue:   { border: '#3b82f6', bg: '#eff6ff', val: '#1d4ed8', lbl: '#3b82f6' },
-    red:    { border: '#ef4444', bg: '#fef2f2', val: '#dc2626', lbl: '#ef4444' },
-    yellow: { border: '#f59e0b', bg: '#fffbeb', val: '#d97706', lbl: '#f59e0b' },
-    green:  { border: '#22c55e', bg: '#f0fdf4', val: '#16a34a', lbl: '#22c55e' },
-    purple: { border: '#a855f7', bg: '#faf5ff', val: '#7c3aed', lbl: '#a855f7' },
-  };
-  const c = colors[color] || colors.blue;
+// ── Stat card ─────────────────────────────────────────────────────────────────
+function KpiCard({ label, value, sub, accent, icon, loading, onClick }) {
   return (
-    <div className="rounded-2xl overflow-hidden shadow-sm border border-gray-100"
-      style={{ background: '#fff', borderTopWidth: 4, borderTopColor: c.border, borderTopStyle: 'solid' }}>
-      <div className="p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: c.lbl }}>{label}</div>
-            {loading ? (
-              <div className="h-8 w-16 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              <div className="text-3xl font-extrabold" style={{ color: c.val }}>{value ?? '—'}</div>
-            )}
-            {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
-          </div>
-          <div className="text-3xl opacity-20">{icon}</div>
+    <div
+      onClick={onClick}
+      style={{
+        background: B.white,
+        border: `1px solid ${B.border}`,
+        borderTop: `4px solid ${accent}`,
+        borderRadius: 16,
+        padding: '18px 20px',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'box-shadow 0.15s',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+      }}
+      onMouseEnter={e => onClick && (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.1)')}
+      onMouseLeave={e => onClick && (e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)')}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: accent, marginBottom: 8 }}>{label}</div>
+          {loading ? (
+            <div style={{ height: 36, width: 80, background: '#f1f5f9', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
+          ) : (
+            <div style={{ fontSize: 32, fontWeight: 900, color: B.slate, lineHeight: 1 }}>{value ?? '—'}</div>
+          )}
+          {sub && <div style={{ fontSize: 12, color: B.muted, marginTop: 6 }}>{sub}</div>}
         </div>
+        <div style={{ fontSize: 28, opacity: 0.18, marginLeft: 12, flexShrink: 0 }}>{icon}</div>
       </div>
     </div>
   );
 }
 
+// ── Mini stat tile ────────────────────────────────────────────────────────────
+function MiniTile({ icon, label, value, accent, bg }) {
+  return (
+    <div style={{ background: bg, borderRadius: 14, padding: '14px 16px', textAlign: 'center' }}>
+      <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+      <div style={{ fontSize: 24, fontWeight: 900, color: accent, lineHeight: 1 }}>{value ?? '—'}</div>
+      <div style={{ fontSize: 11, color: B.muted, marginTop: 4, fontWeight: 600 }}>{label}</div>
+    </div>
+  );
+}
 
-export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
+// ── Section label ─────────────────────────────────────────────────────────────
+function SectionLabel({ children }) {
+  return (
+    <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: B.muted, marginBottom: 12, marginTop: 28 }}>
+      {children}
+    </div>
+  );
+}
+
+// ── Quick action button ───────────────────────────────────────────────────────
+function QuickBtn({ icon, label, accent, onClick }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
+        borderRadius: 12, border: `1.5px solid ${hov ? accent : B.border}`,
+        background: hov ? accent + '0F' : B.white, cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+      }}
+    >
+      <span style={{
+        width: 32, height: 32, borderRadius: 10, background: accent,
+        color: '#fff', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      }}>{icon}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: B.slate }}>{label}</span>
+    </button>
+  );
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────────
+function ProgressBar({ done, total, accent }) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+      <div style={{ flex: 1, height: 7, background: '#f1f5f9', borderRadius: 99 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: accent, borderRadius: 99, transition: 'width 0.4s' }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 700, color: accent, minWidth: 40 }}>{done}/{total}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+export default function Dashboard({ setPage, currentUser }) {
   const [stats, setStats] = useState(null);
   const [riskData, setRiskData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [riskLoading, setRiskLoading] = useState(true);
   const [error, setError] = useState('');
+  const BASE = process.env.REACT_APP_API_URL || '';
 
   useEffect(() => {
     fetch(`${BASE}/api/dashboard`)
@@ -49,144 +129,201 @@ export default function Dashboard({ setPage, setActiveEvalId, currentUser }) {
     fetch(`${BASE}/api/risk-scan`)
       .then(r => r.json())
       .then(d => { setRiskData(d); setRiskLoading(false); })
-      .catch(() => { setRiskLoading(false); });
+      .catch(() => setRiskLoading(false));
   }, []);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const name = currentUser?.username?.split(' ')[0] || 'there';
 
+  const saveRate = stats && stats.total_evaluations > 0
+    ? Math.round((stats.saved / stats.total_evaluations) * 100)
+    : null;
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-7 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-2xl font-extrabold text-gray-900">{greeting}, {name} 👋</h1>
-          <p className="text-gray-500 text-sm mt-1">Here's your client retention overview for today.</p>
-          {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '28px 20px 60px' }}>
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <h1 style={{ fontSize: 28, fontWeight: 900, color: B.slate, margin: 0 }}>
+            {greeting}, {name} 👋
+          </h1>
+          <p style={{ color: B.muted, fontSize: 14, marginTop: 4, marginBottom: 0 }}>
+            Here's your client retention overview for today.
+          </p>
+          {error && <p style={{ color: B.red, fontSize: 12, marginTop: 4 }}>{error}</p>}
         </div>
-        <div className="hidden sm:block">
-          <img src="/mascot-thumbsup.png" alt="" className="w-20 object-contain" style={{ filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.12))' }} />
-        </div>
+        <img
+          src="/mascot-thumbsup.png" alt=""
+          style={{ width: 80, objectFit: 'contain', filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.14))', flexShrink: 0 }}
+        />
       </div>
 
-      {/* Stat Cards Row 1 — this month's CRIS activity */}
-      <div className="mb-3">
-        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">This Month — Cancellation Activity</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Cancellations" value={stats?.total_evaluations} sub="logged this month" color="blue" icon="📋" loading={loading} />
-          <StatCard label="Clients Saved" value={stats?.saved} sub="retained this month" color="green" icon="✓" loading={loading} />
-          <StatCard label="Cancelled" value={stats?.cancelled} sub="lost this month" color="red" icon="✗" loading={loading} />
-          <StatCard label="Revenue Saved" value={stats?.revenue_saved != null ? `$${Math.round(stats.revenue_saved).toLocaleString()}` : null} sub="this month" color="purple" icon="💰" loading={loading} />
-        </div>
+      {/* ── This Month — Cancellation Activity ─────────────────────────────── */}
+      <SectionLabel>This Month — Cancellation Activity</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+        <KpiCard label="Evaluations" value={stats?.total_evaluations} sub="logged this month" accent={B.blue} icon="📋" loading={loading} />
+        <KpiCard label="Clients Saved" value={stats?.saved} sub={saveRate != null ? `${saveRate}% save rate` : 'retained this month'} accent={B.green} icon="✓" loading={loading} onClick={() => setPage('search')} />
+        <KpiCard label="Cancelled" value={stats?.cancelled} sub="lost this month" accent={B.red} icon="✗" loading={loading} />
+        <KpiCard label="Revenue Saved" value={stats?.revenue_saved != null ? `$${Math.round(stats.revenue_saved).toLocaleString()}` : null} sub="protected this month" accent={B.blueMid} icon="💰" loading={loading} />
       </div>
 
-      {/* Stat Cards Row 2 — Proactive Risk Scan */}
-      <div className="mb-7">
-        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 mt-6">Proactive Risk Tracker — Weekly Action Plan</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Active Clients" value={riskData?.total_active_clients} sub="total in MaidCentral" color="blue" icon="👥" loading={riskLoading} />
-          <StatCard label="At Risk This Week" value={riskData?.at_risk_count} sub="max 25 per weekly plan" color="red" icon="🚨" loading={riskLoading} />
-          <StatCard label="L2 Calls (High)" value={riskData?.high_risk} sub="top 10 highest risk → phone call" color="red" icon="📞" loading={riskLoading} />
-          <StatCard label="L1 Care Focus" value={riskData?.low_risk} sub="next 15 → schedule care focus" color="green" icon="🌟" loading={riskLoading} />
+      {/* Pending attention banner */}
+      {stats?.pending > 0 && (
+        <div style={{
+          marginTop: 16, background: B.amberLight, border: `1.5px solid #fde68a`,
+          borderRadius: 14, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14,
+        }}>
+          <span style={{ fontSize: 22 }}>⏰</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, color: '#92400e', fontSize: 14 }}>
+              {stats.pending} cancellation{stats.pending !== 1 ? 's' : ''} need{stats.pending === 1 ? 's' : ''} attention
+            </div>
+            <div style={{ fontSize: 12, color: '#b45309', marginTop: 2 }}>Pending follow-up or AI review</div>
+          </div>
+          <button
+            onClick={() => setPage('search')}
+            style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: B.amber, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+          >
+            Review →
+          </button>
         </div>
-      </div>
+      )}
 
-      {/* Bottom Panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 space-y-4">
-          {/* Risk summary card */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center justify-between mb-4">
+      {/* ── Two-column lower section ────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, marginTop: 4, alignItems: 'start' }}>
+
+        {/* Left — Risk tracker */}
+        <div>
+          <SectionLabel>Proactive Risk Tracker — Weekly Action Plan</SectionLabel>
+          <div style={{ background: B.white, border: `1px solid ${B.border}`, borderRadius: 18, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+
+            {/* Section header */}
+            <div style={{ padding: '16px 20px', borderBottom: `1px solid ${B.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: B.bluePale }}>
               <div>
-                <h2 className="font-bold text-gray-900 text-base">⚠️ Client Risk Summary</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Current risk distribution across all active clients</p>
+                <div style={{ fontWeight: 800, fontSize: 15, color: B.slate }}>⚠️ At-Risk Client Action Plan</div>
+                <div style={{ fontSize: 12, color: B.muted, marginTop: 2 }}>
+                  {riskData?.scan_date ? `Last scanned: ${new Date(riskData.scan_date).toLocaleString()}` : 'Scanning all active clients…'}
+                </div>
               </div>
               <button
                 onClick={() => setPage('at-risk')}
-                className="text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                style={{ padding: '8px 16px', borderRadius: 10, border: `1.5px solid ${B.blue}`, background: B.white, color: B.blue, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
               >
-                View At-Risk Clients →
+                Open Tracker →
               </button>
             </div>
+
+            {/* KPI tiles */}
             {riskLoading ? (
-              <div className="text-center text-gray-400 text-sm animate-pulse py-4">Scanning all clients…</div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  { label: 'L2 Calls (High)', value: riskData?.high_risk, color: 'text-red-600', bg: 'bg-red-50', icon: '📞' },
-                  { label: 'L1 Care Focus', value: riskData?.low_risk, color: 'text-green-600', bg: 'bg-green-50', icon: '🌟' },
-                  { label: 'At Risk Total', value: riskData?.at_risk_count, color: 'text-blue-600', bg: 'bg-blue-50', icon: '⚠️' },
-                  { label: 'All Active', value: riskData?.total_active_clients, color: 'text-gray-600', bg: 'bg-gray-50', icon: '👥' },
-                ].map(item => (
-                  <div key={item.label} className={`${item.bg} rounded-xl p-3 text-center`}>
-                    <div className="text-lg mb-1">{item.icon}</div>
-                    <div className={`text-2xl font-extrabold ${item.color}`}>{item.value ?? '—'}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">{item.label}</div>
-                  </div>
-                ))}
+              <div style={{ padding: 32, textAlign: 'center', color: B.muted, fontSize: 14, animation: 'pulse 1.5s infinite' }}>
+                Scanning all clients…
               </div>
+            ) : (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0 }}>
+                  {[
+                    { icon: '👥', label: 'Active Clients', value: riskData?.total_active_clients, accent: B.blue, bg: B.bluePale },
+                    { icon: '🚨', label: 'At Risk This Week', value: riskData?.at_risk_count, accent: B.red, bg: B.redLight },
+                    { icon: '📞', label: 'L2 Calls (High)', value: riskData?.high_risk, accent: B.red, bg: B.redLight },
+                    { icon: '🌟', label: 'L1 Care Focus', value: riskData?.low_risk, accent: B.green, bg: B.greenLight },
+                  ].map((t, i) => (
+                    <div key={t.label} style={{
+                      padding: '18px 16px', textAlign: 'center', background: t.bg,
+                      borderRight: i < 3 ? `1px solid ${B.border}` : 'none',
+                    }}>
+                      <div style={{ fontSize: 20, marginBottom: 4 }}>{t.icon}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: t.accent, lineHeight: 1 }}>{t.value ?? '—'}</div>
+                      <div style={{ fontSize: 11, color: B.muted, marginTop: 4, fontWeight: 600 }}>{t.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress bars */}
+                <div style={{ padding: '18px 20px', borderTop: `1px solid ${B.border}`, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: B.red }}>📞 L2 Phone Calls — Top 10 High-Risk</span>
+                      <span style={{ fontSize: 11, color: B.muted }}>Call & create ticket in MaidCentral</span>
+                    </div>
+                    <ProgressBar done={0} total={10} accent={B.red} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: B.green }}>🌟 L1 Care Focus — Next 15</span>
+                      <span style={{ fontSize: 11, color: B.muted }}>Schedule extra attention on next clean</span>
+                    </div>
+                    <ProgressBar done={0} total={15} accent={B.green} />
+                  </div>
+                  <button
+                    onClick={() => setPage('at-risk')}
+                    style={{
+                      width: '100%', padding: '11px', borderRadius: 12, border: 'none',
+                      background: `linear-gradient(135deg, ${B.blue}, ${B.blueMid})`,
+                      color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', marginTop: 4,
+                      boxShadow: `0 2px 8px ${B.blue}44`,
+                    }}
+                  >
+                    View Weekly Action Plan →
+                  </button>
+                </div>
+              </>
             )}
           </div>
         </div>
 
-        {/* Right Panel */}
-        <div className="space-y-4">
-          {/* Quick Actions */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h3 className="font-bold text-gray-800 text-sm mb-3">Quick Actions</h3>
-            <div className="space-y-2">
-              {[
-                { label: 'New Cancellation Request', icon: '+', page: 'new-evaluation', color: '#1d4ed8' },
-                { label: 'Ask CRIS a Question', icon: '✦', page: 'ai-chat', color: '#7c3aed' },
-                { label: 'View At-Risk Clients', icon: '⚠', page: 'at-risk', color: '#dc2626' },
-                { label: 'Monthly Report', icon: '↑', page: 'monthly-report', color: '#16a34a' },
-              ].map(action => (
-                <button
-                  key={action.page}
-                  onClick={() => setPage(action.page)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-left transition-all hover:shadow-sm"
-                  style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = action.color; e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}
-                >
-                  <span className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-sm flex-shrink-0"
-                    style={{ background: action.color }}>
-                    {action.icon}
-                  </span>
-                  <span className="text-gray-700">{action.label}</span>
-                </button>
-              ))}
-            </div>
+        {/* Right — Quick actions + motivational */}
+        <div>
+          <SectionLabel>Quick Actions</SectionLabel>
+          <div style={{ background: B.white, border: `1px solid ${B.border}`, borderRadius: 18, padding: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <QuickBtn icon="+" label="New Cancellation Request" accent={B.blue} onClick={() => setPage('new-evaluation')} />
+            <QuickBtn icon="✦" label="Ask CRIS a Question" accent="#7c3aed" onClick={() => setPage('ai-chat')} />
+            <QuickBtn icon="⚠" label="At-Risk Clients" accent={B.red} onClick={() => setPage('at-risk')} />
+            <QuickBtn icon="🔍" label="Account Audit" accent={B.blueMid} onClick={() => setPage('account-audit')} />
+            <QuickBtn icon="↑" label="Monthly Report" accent={B.green} onClick={() => setPage('monthly-report')} />
           </div>
 
-          {/* Pending Follow-Ups */}
-          {stats?.pending > 0 && (
-            <div className="rounded-2xl border border-yellow-200 p-4"
-              style={{ background: 'linear-gradient(135deg, #fffbeb, #fef3c7)' }}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-yellow-600">⏰</span>
-                <span className="font-bold text-yellow-800 text-sm">Pending Follow-Up</span>
+          {/* Mascot card */}
+          <div style={{
+            marginTop: 16, borderRadius: 18, padding: '20px 16px 16px', textAlign: 'center',
+            background: `linear-gradient(160deg, ${B.blueLight}, ${B.greenLight})`,
+            border: `1px solid ${B.border}`,
+          }}>
+            <img src="/mascot-flex.png" alt="" style={{ width: 80, margin: '0 auto 10px', display: 'block', objectFit: 'contain' }} />
+            <p style={{ fontSize: 13, color: B.blue, fontWeight: 700, margin: 0, fontStyle: 'italic' }}>
+              "Cleaning spaces. Creating happy faces."
+            </p>
+            <p style={{ fontSize: 12, color: B.muted, marginTop: 6, marginBottom: 0 }}>— BA House Cleaning</p>
+          </div>
+
+          {/* Save rate spotlight */}
+          {saveRate != null && (
+            <div style={{
+              marginTop: 16, borderRadius: 18, padding: '18px 20px',
+              background: saveRate >= 70 ? B.greenLight : B.amberLight,
+              border: `1px solid ${saveRate >= 70 ? '#bbf7d0' : '#fde68a'}`,
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: saveRate >= 70 ? B.green : B.amber, marginBottom: 4 }}>
+                Save Rate — This Month
               </div>
-              <div className="text-2xl font-extrabold text-yellow-700">{stats.pending}</div>
-              <div className="text-xs text-yellow-600 mt-0.5">cancellations need attention</div>
-              <button
-                onClick={() => setPage('search')}
-                className="mt-3 text-xs font-semibold text-yellow-800 hover:text-yellow-900 underline"
-              >
-                View in Search →
-              </button>
+              <div style={{ fontSize: 38, fontWeight: 900, color: saveRate >= 70 ? B.green : B.amber, lineHeight: 1 }}>
+                {saveRate}%
+              </div>
+              <div style={{ fontSize: 12, color: B.muted, marginTop: 6 }}>
+                {stats.saved} saved of {stats.total_evaluations} evaluated
+              </div>
             </div>
           )}
-
-          {/* Mascot motivational */}
-          <div className="rounded-2xl p-4 text-center" style={{ background: 'linear-gradient(135deg, #eff6ff, #dbeafe)' }}>
-            <img src="/mascot-flex.png" alt="" className="w-20 mx-auto mb-2 object-contain" />
-            <p className="text-xs text-blue-700 font-medium italic">"Cleaning spaces. Creating happy faces."</p>
-            <p className="text-xs text-blue-500 mt-1">— BA House Cleaning</p>
-          </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        @media (max-width: 800px) {
+          .dash-two-col { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
