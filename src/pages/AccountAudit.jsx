@@ -99,7 +99,12 @@ export default function AccountAudit() {
       const res = await fetch(`${BASE}/api/account-audit/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_name: query.trim(), drive_data: driveData || null, audit_reasons: reasons }),
+        body: JSON.stringify({
+          client_name: query.trim(),
+          drive_data: driveData || null,
+          audit_reasons: reasons,
+          tech_history: result || null,  // pass full dispatch history to AI
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'AI audit failed');
@@ -135,6 +140,20 @@ export default function AccountAudit() {
         .audit-table td { font-size: 13px; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--fg); vertical-align: middle; }
         .audit-table tr:last-child td { border-bottom: none; }
         .audit-table tr:hover td { background: #f9fafb; }
+        .visit-row-new td { background: rgba(59,130,246,0.05); }
+        .first-visit-badge { display: inline-block; font-size: 10px; font-weight: 700; background: #fef3c7; color: #92400e; border-radius: 4px; padding: 1px 5px; margin-left: 5px; }
+        .section-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+        .section-head { padding: 12px 16px 10px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--fg); }
+        .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0; }
+        .kv-cell { padding: 11px 16px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+        .kv-cell:last-child { border-right: none; }
+        .kv-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-muted); margin-bottom: 3px; }
+        .kv-val { font-size: 15px; font-weight: 800; color: var(--fg); }
+        .kv-sub { font-size: 11px; color: var(--fg-muted); margin-top: 1px; }
+        .risk-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+        .risk-low    { background: #f0fdf4; color: #166534; }
+        .risk-medium { background: #fffbeb; color: #92400e; }
+        .risk-high   { background: #fef2f2; color: #991b1b; }
       `}</style>
 
       {/* Page header */}
@@ -342,6 +361,140 @@ export default function AccountAudit() {
             )}
           </div>
 
+          {/* Last N visits table */}
+          {result.recent_visits?.length > 0 && (
+            <div className="section-card">
+              <div className="section-head">Last {result.recent_visits.length} visits</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="audit-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>CT</th>
+                      <th style={{ textAlign: 'center' }}>Actual / allowed</th>
+                      <th style={{ textAlign: 'center' }}>Rate</th>
+                      <th style={{ textAlign: 'center' }}>Score</th>
+                      <th>Start</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.recent_visits.map((v, i) => (
+                      <tr key={i} className={i === 0 ? 'visit-row-new' : ''}>
+                        <td style={{ fontSize: 12, color: 'var(--fg-muted)', whiteSpace: 'nowrap' }}>{v.date}</td>
+                        <td style={{ fontWeight: 600, fontSize: 13 }}>
+                          {v.tech}
+                          {v.is_first_or_second && <span className="first-visit-badge">1st–2nd visit</span>}
+                        </td>
+                        <td style={{ textAlign: 'center', fontFamily: 'monospace', fontSize: 12 }}>
+                          {v.actual_h != null && v.allowed_h != null
+                            ? <><strong>{v.actual_h}h</strong> <span style={{ color: 'var(--fg-muted)' }}>/ {v.allowed_h}h</span></>
+                            : v.actual_h != null ? `${v.actual_h}h` : '—'}
+                        </td>
+                        <td style={{ textAlign: 'center', fontSize: 12 }}>
+                          {v.rate != null ? `$${v.rate}` : '—'}
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          {v.scorecard != null ? <ScoreStars score={v.scorecard} /> : <span style={{ color: '#9ca3af' }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{v.start_time || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Money + Satisfaction + Reliability row */}
+          {(result.money || result.satisfaction || result.reliability) && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+
+              {/* Money */}
+              {result.money?.current_rate != null && (
+                <div className="section-card">
+                  <div className="section-head">Money</div>
+                  <div className="kv-grid">
+                    <div className="kv-cell">
+                      <div className="kv-label">Rate</div>
+                      <div className="kv-val">${result.money.current_rate}</div>
+                      <div className="kv-sub">per visit</div>
+                    </div>
+                    {result.money.allowed_hours != null && (
+                      <div className="kv-cell">
+                        <div className="kv-label">Allowed</div>
+                        <div className="kv-val">{result.money.allowed_hours}h</div>
+                      </div>
+                    )}
+                    {result.money.dollar_per_allowed_hr != null && (
+                      <div className="kv-cell">
+                        <div className="kv-label">$/hr at allowed</div>
+                        <div className="kv-val" style={{ color: result.money.dollar_per_allowed_hr >= 65 ? '#16a34a' : '#dc2626' }}>
+                          ${result.money.dollar_per_allowed_hr}
+                        </div>
+                      </div>
+                    )}
+                    {result.money.dollar_per_actual_hr != null && (
+                      <div className="kv-cell">
+                        <div className="kv-label">$/hr actual</div>
+                        <div className="kv-val" style={{ color: result.money.dollar_per_actual_hr >= 65 ? '#16a34a' : result.money.dollar_per_actual_hr >= 55 ? '#ca8a04' : '#dc2626' }}>
+                          ${result.money.dollar_per_actual_hr}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Satisfaction */}
+              {result.satisfaction && (
+                <div className="section-card">
+                  <div className="section-head">Satisfaction</div>
+                  <div className="kv-grid">
+                    <div className="kv-cell">
+                      <div className="kv-label">Avg score</div>
+                      <div className="kv-val">
+                        {result.avg_scorecard != null ? <ScoreStars score={result.avg_scorecard} /> : '—'}
+                      </div>
+                    </div>
+                    <div className="kv-cell">
+                      <div className="kv-label">Coverage</div>
+                      <div className="kv-val">{result.satisfaction.scorecard_coverage_pct}%</div>
+                      <div className="kv-sub">{result.satisfaction.rated_visits} rated</div>
+                    </div>
+                    {result.satisfaction.low_ratings > 0 && (
+                      <div className="kv-cell">
+                        <div className="kv-label">Low ratings</div>
+                        <div className="kv-val" style={{ color: '#dc2626' }}>{result.satisfaction.low_ratings}</div>
+                        <div className="kv-sub">below 3★</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Reliability */}
+              {result.reliability && (
+                <div className="section-card">
+                  <div className="section-head">Reliability</div>
+                  <div className="kv-grid">
+                    <div className="kv-cell">
+                      <div className="kv-label">Frequency</div>
+                      <div className="kv-val" style={{ fontSize: 13 }}>{result.reliability.frequency || '—'}</div>
+                    </div>
+                    <div className="kv-cell">
+                      <div className="kv-label">Est. skips</div>
+                      <div className="kv-val" style={{ color: result.reliability.skipped_estimate > 2 ? '#dc2626' : result.reliability.skipped_estimate > 0 ? '#ca8a04' : '#16a34a' }}>
+                        {result.reliability.skipped_estimate}
+                      </div>
+                      <div className="kv-sub">cycles</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
           {/* Client profile pills */}
           {(p || driveData) && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -380,7 +533,7 @@ export default function AccountAudit() {
                   {Object.entries(aiAudit.audit.signals).map(([type, sig]) => sig && (
                     <div key={type} style={{
                       background: '#fff', border: '1px solid #e9d5ff',
-                      borderLeft: `4px solid ${type === 'time' ? '#06b6d4' : type === 'quality' ? '#8b5cf6' : type === 'feedback' ? '#14b8a6' : '#f59e0b'}`,
+                      borderLeft: `4px solid ${type === 'time' ? '#06b6d4' : type === 'quality' ? '#8b5cf6' : type === 'feedback' ? '#14b8a6' : type === 'rate' ? '#10b981' : '#f59e0b'}`,
                       borderRadius: 8, padding: '10px 12px',
                     }}>
                       <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#7c3aed', marginBottom: 4 }}>
@@ -393,11 +546,30 @@ export default function AccountAudit() {
                 </div>
               )}
               {aiAudit.audit?.recommendation?.action && (
-                <div style={{ background: '#ede9fe', borderRadius: 8, padding: '10px 14px' }}>
+                <div style={{ background: '#ede9fe', borderRadius: 8, padding: '10px 14px', marginBottom: 10 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#5b21b6', marginBottom: 4 }}>AI Recommendation</div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#1e1b4b' }}>{aiAudit.audit.recommendation.action}</div>
                   {aiAudit.audit.recommendation.why && (
                     <div style={{ fontSize: 12, color: '#6d28d9', marginTop: 4 }}>{aiAudit.audit.recommendation.why}</div>
+                  )}
+                </div>
+              )}
+              {aiAudit.audit?.next_step?.action && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#166534', marginBottom: 4 }}>
+                    Next Step — {aiAudit.audit.next_step.owner}{aiAudit.audit.next_step.due ? ` · ${aiAudit.audit.next_step.due}` : ''}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#14532d' }}>{aiAudit.audit.next_step.action}</div>
+                </div>
+              )}
+              {aiAudit.audit?.cancellation_risk && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#7c3aed' }}>Cancellation risk:</span>
+                  <span className={`risk-badge risk-${(aiAudit.audit.cancellation_risk || '').toLowerCase()}`}>
+                    {aiAudit.audit.cancellation_risk}
+                  </span>
+                  {aiAudit.audit.cancellation_risk_reason && (
+                    <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{aiAudit.audit.cancellation_risk_reason}</span>
                   )}
                 </div>
               )}

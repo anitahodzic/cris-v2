@@ -868,6 +868,7 @@ app.get('/api/technician-report', async (req, res) => {
 // ─── Client Tech History (for Account Audit table) ────────────────────────
 // GET /api/client-tech-history?name=<client name>
 // Returns per-technician visit breakdown from dispatch board + scorecard data
+// Full history — no date cap — plus per-visit rows for the "Last N visits" table
 app.get('/api/client-tech-history', async (req, res) => {
   try {
     const name = (req.query.name || '').trim().toLowerCase();
@@ -887,45 +888,85 @@ app.get('/api/client-tech-history', async (req, res) => {
       return full === name || full.includes(name) || name.includes(full);
     });
 
-    // Filter dispatch rows for this client
+    // Filter dispatch rows for this client — ALL history, no date cap
     const clientRows = dispatchRows.filter(r => {
       const customer = (r['Customer'] || '').replace(/\*$/, '').trim().toLowerCase();
       return customer === name || customer.includes(name) || name.includes(customer);
     });
 
-    // Parse allowed vs actual hours if available
-    // Dispatch board may have "Allowed" and "Actual" columns
+    // Sort all client rows by date descending for first-visit detection
+    const sortedRows = [...clientRows].sort((a, b) => {
+      const da = new Date((a['Scheduled'] || '').split(' ')[0]);
+      const db = new Date((b['Scheduled'] || '').split(' ')[0]);
+      return db - da;
+    });
+
+    // Build per-tech aggregates AND collect per-visit rows
     const byTech = {};
+    const allVisitRows = []; // chronological raw visit data for "Last N" table
+
     for (const row of clientRows) {
       const tech = (row['Team'] || row['Technician'] || '').trim();
       if (!tech) continue;
       const scorecard = row['Scorecard'] != null && row['Scorecard'] !== '' ? parseFloat(row['Scorecard']) : null;
       const scheduledStr = row['Scheduled'] || '';
       const datePart = scheduledStr.split(' ')[0];
+      const startTime = scheduledStr.includes(' ') ? scheduledStr.split(' ').slice(1).join(' ') : null;
       const allowed = row['Allowed'] != null && row['Allowed'] !== '' ? parseFloat(row['Allowed']) : null;
       const actual = row['Actual'] != null && row['Actual'] !== '' ? parseFloat(row['Actual']) : null;
+      const rate = row['Rate'] || row['Price'] || row['Amount'] || null;
       const status = (row['Status'] || '').toLowerCase();
       if (status === 'cancelled' || status === 'client cancelled') continue; // skip cancelled visits
 
-      if (!byTech[tech]) byTech[tech] = { tech, visits: 0, scorecards: [], last_date: null, allowed_total: 0, actual_total: 0, has_hours: false };
+      // Per-tech aggregate
+      if (!byTech[tech]) byTech[tech] = {
+        tech, visits: 0, scorecards: [], last_date: null,
+        allowed_total: 0, actual_total: 0, has_hours: false,
+        dates_asc: [], // all visit dates ascending, for first-visit detection
+      };
       byTech[tech].visits++;
       if (scorecard != null) byTech[tech].scorecards.push(scorecard);
       if (datePart) {
         const d = new Date(datePart);
         if (!byTech[tech].last_date || d > new Date(byTech[tech].last_date)) byTech[tech].last_date = datePart;
+        byTech[tech].dates_asc.push(datePart);
       }
       if (allowed != null) { byTech[tech].allowed_total += allowed; byTech[tech].has_hours = true; }
       if (actual != null) { byTech[tech].actual_total += actual; byTech[tech].has_hours = true; }
+
+      // Raw visit row for "Last N" table
+      allVisitRows.push({
+        date: datePart,
+        tech,
+        actual_h: actual,
+        allowed_h: allowed,
+        rate: rate ? parseFloat(rate) : null,
+        scorecard,
+        start_time: startTime,
+      });
     }
+
+    // Sort visit rows newest-first, take last 12
+    allVisitRows.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const recentVisits = allVisitRows.slice(0, 12).map(v => {
+      // Detect if this was the first time this CT cleaned this house (1st or 2nd visit)
+      const techDates = (byTech[v.tech]?.dates_asc || []).sort();
+      const visitIndex = techDates.indexOf(v.date);
+      const is_first_or_second = visitIndex <= 1;
+      return { ...v, is_first_or_second };
+    });
 
     const techs = Object.values(byTech).map(t => {
       const avg_scorecard = t.scorecards.length ? (t.scorecards.reduce((s, v) => s + v, 0) / t.scorecards.length) : null;
-      const efficiency = t.has_hours && t.allowed_total > 0
+      const efficiency = t.has_hours && t.allowed_total > 0 && t.actual_total > 0
         ? Math.round((t.allowed_total / t.actual_total) * 100)
         : null;
       const pct_vs_allowed = t.has_hours && t.allowed_total > 0 && t.actual_total > 0
         ? Math.round(((t.actual_total - t.allowed_total) / t.allowed_total) * 100)
         : null;
+      // First-visit flag for summary: was their MOST RECENT visit a 1st/2nd at this house?
+      const sorted = [...t.dates_asc].sort();
+      const last_visit_index = sorted.lastIndexOf(t.last_date);
       return {
         tech: t.tech,
         visits: t.visits,
@@ -934,25 +975,55 @@ app.get('/api/client-tech-history', async (req, res) => {
         efficiency,
         pct_vs_allowed,
         has_hours: t.has_hours,
+        last_was_first_or_second: last_visit_index <= 1,
       };
     }).sort((a, b) => b.visits - a.visits);
 
-    const totalVisits = clientRows.length;
-    const allScorecards = clientRows.map(r => r['Scorecard']).filter(v => v != null && v !== '').map(Number);
+    const totalVisits = allVisitRows.length;
+    const allScorecards = allVisitRows.map(v => v.scorecard).filter(v => v != null);
     const avgOverall = allScorecards.length ? (allScorecards.reduce((s, v) => s + v, 0) / allScorecards.length) : null;
 
-    // Recommendation logic
+    // Compute satisfaction + reliability signals
+    const scorecardCoverage = totalVisits > 0 ? Math.round((allScorecards.length / totalVisits) * 100) : 0;
+    const lowRatings = allScorecards.filter(s => s < 3).length;
+    const lastRated = allVisitRows.find(v => v.scorecard != null)?.date || null;
+
+    // Detect scheduling reliability signals (rough — based on date gaps between visits)
+    const visitDates = allVisitRows.map(v => v.date).filter(Boolean).sort();
+    let skippedEstimate = 0;
+    if (visitDates.length >= 2 && (profile?.Frequency || '').toLowerCase().includes('two week')) {
+      for (let i = 1; i < visitDates.length; i++) {
+        const gap = (new Date(visitDates[i]) - new Date(visitDates[i - 1])) / (1000 * 60 * 60 * 24);
+        if (gap > 20 && gap < 45) skippedEstimate++; // ~1 skip in a bi-weekly cycle
+      }
+    }
+
+    // Money section — rate info from profile + recent visits
+    const recentRates = recentVisits.filter(v => v.rate != null).map(v => v.rate);
+    const currentRate = recentRates.length ? recentRates[0] : null;
+    const recentActualAvg = recentVisits.filter(v => v.actual_h != null).length
+      ? recentVisits.filter(v => v.actual_h != null).reduce((s, v) => s + v.actual_h, 0) / recentVisits.filter(v => v.actual_h != null).length
+      : null;
+    const allowedHours = recentVisits.find(v => v.allowed_h != null)?.allowed_h || null;
+    const dollarPerAllowedHr = currentRate && allowedHours ? Math.round(currentRate / allowedHours) : null;
+    const dollarPerActualHr = currentRate && recentActualAvg ? Math.round(currentRate / recentActualAvg) : null;
+
+    // Recommendation logic (rule-based; AI Deep Dive goes deeper)
     let recommendations = [];
     if (techs.length === 0) {
       recommendations.push('No visit history found in dispatch board for this client.');
     } else {
       const primaryTech = techs[0];
+      // Skip over-time flag if their last visit was 1st/2nd at this house
+      if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed > 10 && !primaryTech.last_was_first_or_second) {
+        recommendations.push(`${primaryTech.tech} is running ${primaryTech.pct_vs_allowed}% over allowed time — scope or rate review recommended.`);
+      } else if (primaryTech.last_was_first_or_second) {
+        recommendations.push(`${primaryTech.tech}'s most recent visit was their first or second at this house — running long is expected while learning the home.`);
+      }
       if (primaryTech.avg_scorecard != null && primaryTech.avg_scorecard < 3.0) {
         recommendations.push(`${primaryTech.tech} has an average scorecard of ${primaryTech.avg_scorecard.toFixed(1)} — consider a different technician.`);
       }
-      if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed > 10) {
-        recommendations.push(`${primaryTech.tech} is running ${primaryTech.pct_vs_allowed}% over allowed time — scope or rate review recommended.`);
-      } else if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed < -10) {
+      if (primaryTech.pct_vs_allowed != null && primaryTech.pct_vs_allowed < -10) {
         recommendations.push(`${primaryTech.tech} is finishing ${Math.abs(primaryTech.pct_vs_allowed)}% under allowed time — verify quality or adjust rate.`);
       }
       if (recommendations.length === 0) {
@@ -973,22 +1044,40 @@ app.get('/api/client-tech-history', async (req, res) => {
         completed_jobs: profile['Completed Jobs'] || null,
       } : null,
       techs,
+      recent_visits: recentVisits,       // last 12 visits, newest first, with first-visit flag
       total_visits: totalVisits,
       avg_scorecard: avgOverall != null ? Math.round(avgOverall * 100) / 100 : null,
+      satisfaction: {
+        scorecard_coverage_pct: scorecardCoverage,
+        rated_visits: allScorecards.length,
+        low_ratings: lowRatings,
+        last_rated: lastRated,
+      },
+      reliability: {
+        skipped_estimate: skippedEstimate,
+        frequency: profile?.Frequency || null,
+      },
+      money: {
+        current_rate: currentRate,
+        allowed_hours: allowedHours,
+        recent_actual_avg_h: recentActualAvg ? Math.round(recentActualAvg * 100) / 100 : null,
+        dollar_per_allowed_hr: dollarPerAllowedHr,
+        dollar_per_actual_hr: dollarPerActualHr,
+      },
       recommendations,
-      has_dispatch_data: clientRows.length > 0,
+      has_dispatch_data: allVisitRows.length > 0,
     });
   } catch (err) { console.error('client-tech-history error:', err.message); res.status(500).json({ error: err.message }); }
 });
 
 // ─── Customer Account Audit (AI-powered) ──────────────────────────────────
 // POST /api/account-audit/run
-// Body: { client_name, drive_data? }
+// Body: { client_name, drive_data?, audit_reasons?, tech_history? }
 // Looks up Drive CSV data for the client, then asks Claude to produce a
-// structured audit report as JSON.
+// structured audit report as JSON. audit_reasons shifts Claude's analysis focus.
 app.post('/api/account-audit/run', async (req, res) => {
   try {
-    const { client_name, drive_data } = req.body || {};
+    const { client_name, drive_data, audit_reasons, tech_history } = req.body || {};
     if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'client_name is required' });
 
     // 1. Resolve Drive profile — prefer pre-fetched drive_data from frontend
@@ -1053,55 +1142,192 @@ app.post('/api/account-audit/run', async (req, res) => {
       if (cancellation.Notes || cancellation.cancellation_notes) lines.push(`  Notes: ${cancellation.Notes || cancellation.cancellation_notes}`);
     }
 
+    // 2b. Append tech history if provided by the frontend (from /api/client-tech-history)
+    if (tech_history) {
+      lines.push('');
+      lines.push('DISPATCH BOARD — TIME BY TECHNICIAN (full history, no date cap):');
+      if (tech_history.techs && tech_history.techs.length > 0) {
+        for (const t of tech_history.techs) {
+          const vsAllowed = t.pct_vs_allowed != null ? `${t.pct_vs_allowed > 0 ? '+' : ''}${t.pct_vs_allowed}% vs allowed` : 'no hour data';
+          const eff = t.efficiency != null ? `, overall efficiency ${t.efficiency}%` : '';
+          const score = t.avg_scorecard != null ? `, avg scorecard ${t.avg_scorecard.toFixed(1)}★` : '';
+          const firstFlag = t.last_was_first_or_second ? ' [NOTE: most recent visit was CT\'s 1st or 2nd at this house — longer time is expected]' : '';
+          lines.push(`  ${t.tech}: ${t.visits} visits, ${vsAllowed}${eff}${score}, last ${t.last_date || '?'}${firstFlag}`);
+        }
+      } else {
+        lines.push('  No dispatch board history found.');
+      }
+
+      if (tech_history.recent_visits && tech_history.recent_visits.length > 0) {
+        lines.push('');
+        lines.push('LAST VISITS (newest first):');
+        for (const v of tech_history.recent_visits.slice(0, 12)) {
+          const hrs = v.actual_h != null && v.allowed_h != null ? `${v.actual_h}h actual / ${v.allowed_h}h allowed` : v.actual_h != null ? `${v.actual_h}h` : '';
+          const rate = v.rate != null ? ` $${v.rate}` : '';
+          const score = v.scorecard != null ? ` ${v.scorecard}★` : '';
+          const firstFlag = v.is_first_or_second ? ' [1st or 2nd visit — learning the house]' : '';
+          lines.push(`  ${v.date} ${v.tech}${rate}${hrs ? ' ' + hrs : ''}${score}${firstFlag}`);
+        }
+      }
+
+      if (tech_history.money) {
+        const m = tech_history.money;
+        lines.push('');
+        lines.push('MONEY:');
+        if (m.current_rate != null) lines.push(`  Current rate: $${m.current_rate}/visit`);
+        if (m.allowed_hours != null) lines.push(`  Allowed hours: ${m.allowed_hours}h`);
+        if (m.recent_actual_avg_h != null) lines.push(`  Recent actual avg: ${m.recent_actual_avg_h}h`);
+        if (m.dollar_per_allowed_hr != null) lines.push(`  $/labor-hr at allowed: $${m.dollar_per_allowed_hr}`);
+        if (m.dollar_per_actual_hr != null) lines.push(`  $/labor-hr actual: $${m.dollar_per_actual_hr}`);
+      }
+
+      if (tech_history.satisfaction) {
+        const s = tech_history.satisfaction;
+        lines.push('');
+        lines.push('SATISFACTION:');
+        lines.push(`  Scorecard coverage: ${s.scorecard_coverage_pct}% of visits rated (${s.rated_visits} visits)`);
+        if (s.low_ratings > 0) lines.push(`  Low ratings (<3★): ${s.low_ratings}`);
+        if (s.last_rated) lines.push(`  Last rated: ${s.last_rated}`);
+      }
+
+      if (tech_history.reliability) {
+        const r = tech_history.reliability;
+        lines.push('');
+        lines.push('RELIABILITY:');
+        if (r.frequency) lines.push(`  Scheduled frequency: ${r.frequency}`);
+        if (r.skipped_estimate > 0) lines.push(`  Estimated skipped cycles: ~${r.skipped_estimate} (based on gap analysis)`);
+      }
+    }
+
     const dataBlock = lines.join('\n');
 
-    // 3. Prompt Claude for a structured audit
+    // 3. Build reason-specific focus instructions
+    const reasons = Array.isArray(audit_reasons) ? audit_reasons : [];
+    const reasonFocusLines = [];
+
+    if (reasons.includes('ct_too_long')) {
+      reasonFocusLines.push(`REASON: "CT says it takes too long"
+→ This is the PRIMARY question. Your time analysis MUST:
+   1. Compare this CT's time vs ALL other CTs who've cleaned this house. Is this CT actually an outlier, or is the house just a longer job?
+   2. Check full history — has this CT always run long here, or has it changed over time (scope creep)?
+   3. CRITICAL: Flag explicitly if their most recent visits were their 1st or 2nd at this house — longer time is completely normal while a CT learns a new home and should NOT be flagged as a problem.
+   4. If this CT runs over here but not elsewhere (based on overall efficiency), the problem is the house scope, not the CT.
+   5. If this CT runs over everywhere (low overall efficiency), the problem is the CT.`);
+    }
+
+    if (reasons.includes('client_complained')) {
+      reasonFocusLines.push(`REASON: "Client complained"
+→ Focus on WHAT CHANGED RECENTLY:
+   1. Did the primary CT change recently? Was there a substitute?
+   2. Did visit time change around the complaint window — shorter (rushing) or longer?
+   3. Did scorecard ratings dip recently? Look at the trajectory, not just the average.
+   4. Any gap in scheduling before the complaint?
+   5. Summarize the most likely trigger for the complaint based on the data.`);
+    }
+
+    if (reasons.includes('rate_review')) {
+      reasonFocusLines.push(`REASON: "Rate review"
+→ Focus on the revenue math:
+   1. Calculate $/labor-hr at allowed vs $/labor-hr at actual — are we hitting our target bill rate?
+   2. The goal hourly bill rate for BA House Cleaning is $${process.env.GOAL_HOURLY_BILL_RATE || '70'}/hr. Flag whether this account is above, at, or below that.
+   3. How long since the last rate increase? Is the current rate keeping pace with actual time spent?
+   4. If actual time is consistently over allowed, what rate adjustment would bring $/actual-hr back to goal?
+   5. Give a specific dollar recommendation (e.g., "raise from $X to $Y to hit $70/hr at actual time").`);
+    }
+
+    if (reasons.includes('churn_risk')) {
+      reasonFocusLines.push(`REASON: "Churn risk"
+→ This is a retention analysis. Look at:
+   1. Recent rating trajectory — are scores trending down?
+   2. Scorecard comment signals — any red flags in recent feedback?
+   3. Scheduling reliability — have they been skipping or rescheduling? Gaps in service are a strong churn predictor.
+   4. Frequency changes — did they downgrade (weekly → bi-weekly)?
+   5. Last actual cleaning vs. what their schedule says — has there been a lapse?
+   6. Lifetime value and tenure — frame the retention value clearly to help the team prioritize.
+   7. Rate the cancellation risk: Low / Medium / High, with a reason.`);
+    }
+
+    if (reasons.includes('new_ct')) {
+      reasonFocusLines.push(`REASON: "New CT taking over"
+→ Write a briefing for the incoming CT and the office:
+   1. What does the home require? What has the typical time vs. allowed looked like?
+   2. Client personality signals — do they rate consistently? Are they high or low scorers?
+   3. What did the previous primary CT do that worked? (high score + on time = good match)
+   4. Any quirks — unusual scheduling, rate sensitivities, complaints history?
+   5. What the new CT should expect on their first visit (longer time is normal — don't panic).`);
+    }
+
+    if (reasons.length === 0 || reasons.includes('other')) {
+      reasonFocusLines.push(`REASON: General audit — no specific reason flagged.
+→ Do a balanced scan across all signals: time, quality, scheduling, rate, and retention risk.`);
+    }
+
+    const reasonBlock = reasonFocusLines.length > 0
+      ? `\n\nAUDIT FOCUS — REASON(S) FOR THIS AUDIT:\n${reasonFocusLines.join('\n\n')}\n\nPrioritize your analysis and recommendations around the above reason(s). The signals schema is the same — but weight your summary, recommendation, and next_step toward what's most relevant for the flagged reason(s).`
+      : '';
+
+    // 4. Prompt Claude for a structured audit
     const systemPrompt = `You are CRIS — the Client Relationship Intelligence System for BA House Cleaning, a Diamond Certified residential cleaning company in the East Bay, California.
 
-You are generating a Customer Account Audit. This is NOT a cancellation evaluation — the client may be active and in good standing. Your job is to assess the health of this account based on the MaidCentral data available and return a structured JSON report that helps the team understand whether action is needed.
+You are generating a Customer Account Audit. This is NOT a cancellation evaluation — the client may be active and in good standing. Your job is to assess the health of this account based on the data available and return a structured JSON report that helps the team understand whether action is needed.
 
 BA House Cleaning's core values: WOW, Integrity, Respect, Accountability, Professionalism.
+Goal bill rate: $${process.env.GOAL_HOURLY_BILL_RATE || '70'}/hr.
 
-DATA AVAILABLE: You have aggregate MaidCentral data (lifetime totals, last job date, revenue, scorecard averages). You do NOT have per-visit detail rows — synthesize from what is available and be transparent about uncertainty.
+IMPORTANT RULES:
+- A CT running long on their FIRST or SECOND visit at a house is NORMAL and expected. Never flag this as a problem. Say it explicitly when it applies.
+- A CT over-time at ONE house but efficient overall → scope/house issue, not a CT issue.
+- A CT over-time at ALL houses (low overall efficiency) → CT issue.
+- When you don't have enough data to be certain, say so — but still give your best analysis of what the data suggests.
 
 You MUST return ONLY valid JSON matching this exact schema, with no markdown fencing or explanation:
 {
   "status": "On Track" | "Needs Attention" | "Urgent",
   "status_reason": "one short phrase (≤10 words) explaining the status",
-  "summary": "2-3 sentences synthesizing the account health signals",
-  "review_window": "describe what data was available and any caveats",
+  "summary": "2-4 sentences synthesizing the account health signals, weighted toward the audit reason(s)",
+  "review_window": "how far back does the history go, and how many visits",
   "signals": {
     "time": {
       "headline": "short headline",
-      "detail": "what we know about time/frequency patterns"
+      "detail": "what the data shows about time — include first-visit context if relevant, trend over time, and comparison across CTs"
     },
     "quality": {
       "headline": "short headline (score or N/A)",
-      "detail": "what we know about quality signals"
+      "detail": "scorecard trajectory, any low ratings, coverage"
     },
     "feedback": {
       "headline": "short headline",
-      "detail": "what we know about client feedback or contact history"
+      "detail": "scheduling reliability, gaps, frequency changes, contact signals"
     },
     "tech": {
       "headline": "short headline",
-      "detail": "any technician-related observations (use 'No concerns noted' if none)"
+      "detail": "CT-specific observations — who's doing well, who isn't, bonding signals"
+    },
+    "rate": {
+      "headline": "short headline about the rate health",
+      "detail": "$/hr at allowed vs actual vs goal, when rate was last changed, any specific adjustment recommendation"
     }
   },
   "recommendation": {
-    "action": "specific recommended action (1-2 sentences)",
-    "why": "evidence-based reason for this recommendation",
-    "evidence_count": "how many data signals support this"
+    "action": "specific recommended action (1-2 sentences, concrete)",
+    "why": "evidence-based reason referencing the actual data",
+    "evidence_count": "number of data signals that support this"
   },
   "next_step": {
     "action": "specific next step (1-2 sentences)",
-    "owner": "who should do this (Team Lead / Office / Staff / etc.)",
+    "owner": "Team Lead / Office / Staff / etc.",
     "due": "when",
     "review_point": "when to follow up"
-  }
+  },
+  "cancellation_risk": "Low" | "Medium" | "High",
+  "cancellation_risk_reason": "one sentence explaining the risk rating"
 }`;
 
-    const userPrompt = `Run a Customer Account Audit for the following client:\n\n${dataBlock}\n\nAssess account health, identify any signals worth attention, and return the structured JSON audit report.`;
+    const userPrompt = `Run a Customer Account Audit for the following client:
+
+${dataBlock}${reasonBlock}
+
+Return the structured JSON audit report.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
