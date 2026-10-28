@@ -15,11 +15,15 @@ const RISK_SCAN_STEPS = [
   [5200, 94, 'Almost done…'],
 ];
 
+// BAHC brand tokens
+const BAHC_BLUE  = '#1B5EA0';
+const BAHC_GREEN = '#2A8C5A';
+
 const TIER_STYLE = {
   High:       { bg: '#fef2f2', color: '#dc2626', border: '#fecaca', dot: '#dc2626' },
   Medium:     { bg: '#fffbeb', color: '#d97706', border: '#fde68a', dot: '#d97706' },
-  Low:        { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0', dot: '#16a34a' },
-  'Very Low': { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe', dot: '#2563eb' },
+  Low:        { bg: '#EBF7F1', color: BAHC_GREEN, border: '#a7f3d0', dot: BAHC_GREEN },
+  'Very Low': { bg: '#EBF3FB', color: BAHC_BLUE,  border: '#bfdbfe', dot: BAHC_BLUE  },
 };
 
 function TierBadge({ tier, size = 'sm' }) {
@@ -484,7 +488,7 @@ function ActionRow({ client, rank, track, hasL2, cfRecord, onL2Click, onCFClick,
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🌟 Care Focus</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: BAHC_GREEN, textTransform: 'uppercase', letterSpacing: '0.05em' }}>🌟 L1 Care Focus</span>
             {cfRecord ? (
               cfRecord.completed ? (
                 <span style={{ fontSize: 11, background: '#f0fdf4', color: '#16a34a', border: '1px solid #86efac', borderRadius: 20, padding: '1px 8px', fontWeight: 700 }}>
@@ -523,7 +527,7 @@ function ActionRow({ client, rank, track, hasL2, cfRecord, onL2Click, onCFClick,
             </button>
           ) : (
             <button onClick={onCFClick}
-              style={{ padding: '7px 14px', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', background: 'linear-gradient(135deg,#2563eb,#3b82f6)', color: '#fff', whiteSpace: 'nowrap' }}>
+              style={{ padding: '7px 14px', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', background: `linear-gradient(135deg,${BAHC_GREEN},#38A169)`, color: '#fff', whiteSpace: 'nowrap' }}>
               🌟 Schedule
             </button>
           )
@@ -578,7 +582,7 @@ function ClientRow({ client, checkIns, onCheckIn, onL2Click, hasL2 }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
           <button onClick={e => { e.stopPropagation(); onCheckIn(); }}
-            style={{ padding: '6px 14px', background: 'linear-gradient(135deg,#1d4ed8,#2563eb)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            style={{ padding: '6px 14px', background: `linear-gradient(135deg,${BAHC_BLUE},#2774B8)`, color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
             + Check-In
           </button>
           {(tier === 'High' || tier === 'Medium') && (
@@ -734,13 +738,16 @@ export default function AtRiskClients({ currentUser }) {
       {/* Header */}
       <div style={{ marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: '#0f172a', margin: 0 }}>Proactive Risk Tracker</h1>
-          <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 14 }}>
-            Weekly Top 25 action plan — L2 calls for highest risk, Care Focus for the next tier.
-            {scanData?.scan_date && <span style={{ color: '#94a3b8' }}> · Last scanned: {new Date(scanData.scan_date).toLocaleString()}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <span style={{ fontSize: 28 }}>⚠️</span>
+            <h1 style={{ fontSize: 26, fontWeight: 900, color: '#0f172a', margin: 0 }}>Proactive Risk Tracker</h1>
+          </div>
+          <p style={{ color: '#64748b', margin: 0, fontSize: 14 }}>
+            Weekly Top 25 action plan — <strong style={{ color: '#dc2626' }}>L2 calls</strong> for highest risk, <strong style={{ color: BAHC_GREEN }}>Care Focus</strong> for the next tier.
+            {scanData?.scan_date && <span style={{ color: '#94a3b8' }}> · Scanned {new Date(scanData.scan_date).toLocaleString()}</span>}
           </p>
         </div>
-        <button onClick={load} style={{ padding: '9px 16px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, fontWeight: 600, background: '#fff', color: '#374151', cursor: 'pointer' }}>
+        <button onClick={load} style={{ padding: '9px 16px', border: `1.5px solid ${BAHC_BLUE}`, borderRadius: 10, fontSize: 13, fontWeight: 700, background: '#fff', color: BAHC_BLUE, cursor: 'pointer' }}>
           ↻ Refresh
         </button>
       </div>
@@ -749,10 +756,10 @@ export default function AtRiskClients({ currentUser }) {
       <div style={{ display: 'flex', gap: 1, marginBottom: 24, background: '#f1f5f9', padding: 4, borderRadius: 12, width: 'fit-content' }}>
         {[{ id: 'weekly', label: '📋 Weekly Action Plan' }, { id: 'all', label: '📊 All Clients' }].map(v => (
           <button key={v.id} onClick={() => setView(v.id)}
-            style={{ padding: '8px 18px', borderRadius: 9, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-              background: view === v.id ? '#fff' : 'transparent',
-              color: view === v.id ? '#0f172a' : '#64748b',
-              boxShadow: view === v.id ? '0 1px 4px rgba(0,0,0,0.1)' : 'none' }}>
+            style={{ padding: '8px 18px', borderRadius: 9, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+              background: view === v.id ? BAHC_BLUE : 'transparent',
+              color: view === v.id ? '#fff' : '#64748b',
+              boxShadow: view === v.id ? `0 2px 8px ${BAHC_BLUE}44` : 'none' }}>
             {v.label}
           </button>
         ))}
@@ -764,9 +771,9 @@ export default function AtRiskClients({ currentUser }) {
           {/* Progress summary */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 28 }}>
             {[
-              { label: 'L2 Calls', done: l2Done, total: 10, color: '#dc2626', bg: '#fef2f2', icon: '📞' },
-              { label: 'Care Focus Scheduled', done: cfScheduled + cfDone, total: 15, color: '#2563eb', bg: '#eff6ff', icon: '📅' },
-              { label: 'Care Focus Complete', done: cfDone, total: 15, color: '#16a34a', bg: '#f0fdf4', icon: '✓' },
+              { label: 'L2 Calls Logged', done: l2Done, total: 10, color: '#dc2626', bg: '#fef2f2', icon: '📞' },
+              { label: 'Care Focus Scheduled', done: cfScheduled + cfDone, total: 15, color: BAHC_BLUE, bg: '#EBF3FB', icon: '📅' },
+              { label: 'Care Focus Complete', done: cfDone, total: 15, color: BAHC_GREEN, bg: '#EBF7F1', icon: '✓' },
             ].map(item => (
               <div key={item.label} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
@@ -785,14 +792,14 @@ export default function AtRiskClients({ currentUser }) {
 
           {/* Top 10 — L2 Calls */}
           <div style={{ marginBottom: 32 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <div style={{ width: 4, height: 24, background: '#dc2626', borderRadius: 2, flexShrink: 0 }} />
-              <div>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>Top 10 — L2 Phone Calls</h2>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>Highest-risk clients this week. Create an L2 ticket in MaidCentral and make the call.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: '#fef2f2', borderRadius: 14, padding: '14px 16px', border: '1px solid #fecaca' }}>
+              <div style={{ width: 4, height: 32, background: '#dc2626', borderRadius: 2, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: '#dc2626' }}>📞 Top 10 — L2 Phone Calls</h2>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#7f1d1d' }}>Highest-risk clients this week. Create an L2 ticket in MaidCentral and call each client.</p>
               </div>
-              <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: '#dc2626', background: '#fef2f2', borderRadius: 20, padding: '3px 12px', border: '1px solid #fecaca' }}>
-                {l2Done}/10 logged
+              <span style={{ fontSize: 18, fontWeight: 900, color: '#dc2626', whiteSpace: 'nowrap' }}>
+                {l2Done}<span style={{ fontSize: 13, fontWeight: 500, color: '#f87171' }}>/10</span>
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -808,14 +815,14 @@ export default function AtRiskClients({ currentUser }) {
 
           {/* Next 15 — Care Focus */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <div style={{ width: 4, height: 24, background: '#2563eb', borderRadius: 2, flexShrink: 0 }} />
-              <div>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>Next 15 — Care Focus</h2>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>Schedule a Care Focus on their next cleaning. The team gives extra attention and a personal touch.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: '#EBF7F1', borderRadius: 14, padding: '14px 16px', border: `1px solid #a7f3d0` }}>
+              <div style={{ width: 4, height: 32, background: BAHC_GREEN, borderRadius: 2, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: BAHC_GREEN }}>🌟 Next 15 — L1 Care Focus</h2>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#166534' }}>Schedule extra attention on their next cleaning. Log a Care Focus — creates an L1 ticket in MaidCentral.</p>
               </div>
-              <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: '#2563eb', background: '#eff6ff', borderRadius: 20, padding: '3px 12px', border: '1px solid #bfdbfe' }}>
-                {cfDone}/15 complete
+              <span style={{ fontSize: 18, fontWeight: 900, color: BAHC_GREEN, whiteSpace: 'nowrap' }}>
+                {cfDone}<span style={{ fontSize: 13, fontWeight: 500, color: '#6ee7b7' }}>/15</span>
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
