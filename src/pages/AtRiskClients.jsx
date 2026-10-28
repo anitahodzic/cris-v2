@@ -1011,11 +1011,9 @@ function TicketLog() {
                   <div style={{ fontSize: 12, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.risk_reason}>{t.risk_reason || '—'}</div>
                   <div>
                     <span style={{ fontSize: 11, fontWeight: 600,
-                      color: t.status === 'Created' || t.status === 'Completed' ? '#16a34a' : t.status === 'Pending' ? '#d97706' : '#64748b',
-                      background: t.status === 'Created' || t.status === 'Completed' ? '#f0fdf4' : t.status === 'Pending' ? '#fffbeb' : '#f8fafc',
-                      border: `1px solid ${t.status === 'Created' || t.status === 'Completed' ? '#86efac' : t.status === 'Pending' ? '#fde68a' : '#e2e8f0'}`,
+                      color: '#16a34a', background: '#f0fdf4', border: '1px solid #86efac',
                       borderRadius: 12, padding: '1px 8px' }}>
-                      {t.status}
+                      ✓ Created in MC
                     </span>
                   </div>
                 </div>
