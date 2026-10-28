@@ -352,15 +352,17 @@ function L2TicketModal({ client, currentUser, onSave, onClose }) {
   );
 }
 
-// ─── Check-In Modal ───────────────────────────────────────────────────────────
-function CheckInModal({ client, currentUser, onSave, onClose }) {
-  const [form, setForm] = useState({ contact_method: 'Phone Call', notes: '', risk_tier_after: client.risk_tier });
+// ─── Note Modal ───────────────────────────────────────────────────────────────
+// Note type is L2 Note or L1 Note only — driven by the client's track
+function NoteModal({ client, track, currentUser, onSave, onClose }) {
+  const defaultType = track === 'l2' ? 'L2 Note' : 'L1 Note';
+  const [noteType, setNoteType] = useState(defaultType);
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const set = k => v => setForm(f => ({ ...f, [k]: v }));
 
   const handleSave = async () => {
-    if (!form.notes.trim()) { setErr('Please add some notes about the check-in.'); return; }
+    if (!notes.trim()) { setErr('Please add a note.'); return; }
     setSaving(true);
     try {
       const res = await fetch(`${BASE}/api/check-ins`, {
@@ -369,10 +371,10 @@ function CheckInModal({ client, currentUser, onSave, onClose }) {
         body: JSON.stringify({
           client_name: client.name,
           staff_name: currentUser?.username || '',
-          contact_method: form.contact_method,
-          notes: form.notes,
+          contact_method: noteType,
+          notes: notes,
           risk_tier_before: client.risk_tier,
-          risk_tier_after: form.risk_tier_after,
+          risk_tier_after: client.risk_tier,
         }),
       });
       const data = await res.json();
@@ -385,60 +387,54 @@ function CheckInModal({ client, currentUser, onSave, onClose }) {
     }
   };
 
-  const tierChanged = form.risk_tier_after !== client.risk_tier;
-  const tierImproved = TIER_ORDER[form.risk_tier_after] > TIER_ORDER[client.risk_tier];
+  const isL2 = noteType === 'L2 Note';
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
+      <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
         <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Log Check-In</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>+ Add Note</h3>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>{client.name}</p>
         </div>
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Note type toggle — L2 or L1 only */}
           <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Contact Method</label>
-            <select value={form.contact_method} onChange={e => set('contact_method')(e.target.value)}
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 14, color: '#1e293b', background: '#fff' }}>
-              {['Phone Call', 'Text Message', 'Email', 'In Person', 'Other'].map(m => <option key={m}>{m}</option>)}
-            </select>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Note Type</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {['L2 Note', 'L1 Note'].map(type => {
+                const active = noteType === type;
+                const isL2type = type === 'L2 Note';
+                const color = isL2type ? '#dc2626' : BAHC_GREEN;
+                const bg = isL2type ? '#fef2f2' : '#f0fdf4';
+                const border = isL2type ? '#fecaca' : '#bbf7d0';
+                const sub = isL2type ? 'Follow-up call + text' : 'Care Focus visit note';
+                return (
+                  <button key={type} onClick={() => setNoteType(type)}
+                    style={{ flex: 1, padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                      background: active ? bg : '#fff',
+                      border: `${active ? 2 : 1}px solid ${active ? color : '#e2e8f0'}`,
+                      color: active ? color : '#64748b' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{type}</div>
+                    <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>{sub}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Notes</label>
-            <textarea value={form.notes} onChange={e => set('notes')(e.target.value)} rows={4}
-              placeholder="What did you discuss? How did the client respond? Any commitments made?"
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4}
+              placeholder={isL2 ? 'Call outcome, client response, next steps…' : 'Team instructions, client notes, visit observations…'}
               style={{ width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, color: '#1e293b', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
-              Updated Risk Tier <span style={{ fontWeight: 400, color: '#94a3b8' }}>(did this change their risk?)</span>
-            </label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {['High', 'Medium', 'Low', 'Very Low'].map(t => (
-                <button key={t} onClick={() => set('risk_tier_after')(t)}
-                  style={{ padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                    border: form.risk_tier_after === t ? `2px solid ${TIER_STYLE[t]?.color}` : '1.5px solid #e2e8f0',
-                    background: form.risk_tier_after === t ? TIER_STYLE[t]?.bg : '#fff',
-                    color: form.risk_tier_after === t ? TIER_STYLE[t]?.color : '#64748b' }}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            {tierChanged && (
-              <p style={{ fontSize: 12, marginTop: 8, color: tierImproved ? '#16a34a' : '#d97706' }}>
-                {tierImproved ? '✓ Risk improved: ' : '⚠ Risk increased: '}
-                <strong>{client.risk_tier}</strong> → <strong>{form.risk_tier_after}</strong>
-              </p>
-            )}
           </div>
           {err && <p style={{ fontSize: 13, color: '#dc2626', margin: 0 }}>{err}</p>}
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '9px 18px', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, fontWeight: 600, color: '#64748b', background: '#fff', cursor: 'pointer' }}>Cancel</button>
           <button onClick={handleSave} disabled={saving}
-            style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: saving ? '#94a3b8' : 'linear-gradient(135deg,#1d4ed8,#2563eb)', cursor: saving ? 'default' : 'pointer' }}>
-            {saving ? 'Saving…' : 'Log Check-In'}
+            style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: saving ? '#94a3b8' : `linear-gradient(135deg,${BAHC_BLUE},#2774B8)`, cursor: saving ? 'default' : 'pointer' }}>
+            {saving ? 'Saving…' : '+ Save Note'}
           </button>
         </div>
       </div>
@@ -447,18 +443,24 @@ function CheckInModal({ client, currentUser, onSave, onClose }) {
 }
 
 // ─── Weekly Action Plan Row ───────────────────────────────────────────────────
-function ActionRow({ client, rank, track, hasL2, cfRecord, onL2Click, onCFClick, onCFComplete, onCheckIn }) {
+function ActionRow({ client, rank, track, hasL2, cfRecord, onL2Click, onCFClick, onCFComplete, onCheckIn, selected, onToggleSelect }) {
   const tier = client.effective_tier || client.risk_tier;
   const s = TIER_STYLE[tier] || TIER_STYLE.Medium;
   const isL2Track = track === 'l2';
-  const trackColor = isL2Track ? '#dc2626' : '#2563eb';
-  const trackBg = isL2Track ? '#fef2f2' : '#eff6ff';
+  const trackColor = isL2Track ? '#dc2626' : BAHC_GREEN;
+  const trackBg = isL2Track ? '#fef2f2' : '#f0fdf4';
+  // Ticket already actioned for this client
+  const alreadyDone = isL2Track ? hasL2 : !!cfRecord;
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '14px 18px', display: 'flex', gap: 14, alignItems: 'flex-start', borderLeft: `4px solid ${trackColor}` }}>
-      {/* Rank badge */}
-      <div style={{ width: 32, height: 32, borderRadius: '50%', background: trackBg, color: trackColor, fontSize: 14, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {rank}
+    <div style={{ background: selected ? (isL2Track ? '#fff5f5' : '#f0fdf4') : '#fff', border: `1px solid ${selected ? trackColor + '60' : '#e2e8f0'}`, borderRadius: 14, padding: '14px 18px', display: 'flex', gap: 14, alignItems: 'flex-start', borderLeft: `4px solid ${trackColor}`, transition: 'background 0.1s' }}>
+      {/* Checkbox + Rank */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+        <input type="checkbox" checked={selected} onChange={onToggleSelect} disabled={alreadyDone}
+          style={{ width: 16, height: 16, accentColor: trackColor, cursor: alreadyDone ? 'default' : 'pointer', marginTop: 2 }} />
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: trackBg, color: trackColor, fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {rank}
+        </div>
       </div>
 
       {/* Main info */}
@@ -534,7 +536,7 @@ function ActionRow({ client, rank, track, hasL2, cfRecord, onL2Click, onCFClick,
         )}
         <button onClick={onCheckIn}
           style={{ padding: '6px 14px', background: '#f8fafc', color: '#374151', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          + Note
+          + {isL2Track ? 'L2' : 'L1'} Note
         </button>
       </div>
     </div>
@@ -1042,10 +1044,82 @@ export default function AtRiskClients({ currentUser }) {
   const [mainTab, setMainTab] = useState('thisweek'); // 'thisweek' | 'journey' | 'ticketlog'
 
   // Modals
-  const [checkInClient, setCheckInClient] = useState(null);
+  const [noteClient, setNoteClient] = useState(null);   // { client, track }
   const [l2Client, setL2Client] = useState(null);
   const [cfClient, setCfClient] = useState(null);
   const [cfCompleteClient, setCfCompleteClient] = useState(null);
+
+  // Multi-select for batch ticket creation
+  const [selectedL2, setSelectedL2] = useState(new Set()); // client names
+  const [selectedL1, setSelectedL1] = useState(new Set());
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [batchResult, setBatchResult] = useState(null); // { success, failed }
+
+  const toggleL2 = (name) => setSelectedL2(s => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  const toggleL1 = (name) => setSelectedL1(s => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  const clearSelections = () => { setSelectedL2(new Set()); setSelectedL1(new Set()); };
+
+  const submitBatchL2 = async () => {
+    if (selectedL2.size === 0) return;
+    setBatchSubmitting(true);
+    setBatchResult(null);
+    const names = [...selectedL2];
+    let success = 0, failed = 0;
+    for (const name of names) {
+      const client = top10.find(c => c.name === name);
+      if (!client) continue;
+      const reason = client.signals?.[0] || 'At-risk client';
+      try {
+        // MC ticket
+        await fetch(`${BASE}/api/mc/create-note`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_name: name, level: 2, reason, details: client.signals?.slice(1).join('; ') || '', create_ticket: true }),
+        });
+        // CRIS log
+        const res = await fetch(`${BASE}/api/l2-tickets`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_name: name, risk_score: client.risk_score, tier: client.effective_tier || client.risk_tier, risk_reason: reason, created_by: currentUser?.username || 'CRIS' }),
+        });
+        const d = await res.json();
+        if (d.ok) success++; else failed++;
+      } catch { failed++; }
+    }
+    setBatchResult({ success, failed, type: 'L2' });
+    clearSelections();
+    load();
+    setBatchSubmitting(false);
+  };
+
+  const submitBatchL1 = async () => {
+    if (selectedL1.size === 0) return;
+    setBatchSubmitting(true);
+    setBatchResult(null);
+    const names = [...selectedL1];
+    let success = 0, failed = 0;
+    for (const name of names) {
+      const client = next15.find(c => c.name === name);
+      if (!client) continue;
+      const reason = client.signals?.[0] || 'At-risk client — schedule care focus';
+      try {
+        // MC ticket
+        await fetch(`${BASE}/api/mc/create-note`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_name: name, level: 1, reason, details: client.signals?.slice(1).join('; ') || '', create_ticket: true }),
+        });
+        // CRIS log
+        const res = await fetch(`${BASE}/api/care-focus`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_name: name, risk_score: client.risk_score, tier: client.effective_tier || client.risk_tier, risk_reason: (client.signals || []).join(', '), scheduled_date: '', notes: '', created_by: currentUser?.username || 'CRIS' }),
+        });
+        const d = await res.json();
+        if (d.ok) success++; else failed++;
+      } catch { failed++; }
+    }
+    setBatchResult({ success, failed, type: 'L1' });
+    clearSelections();
+    load();
+    setBatchSubmitting(false);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1117,6 +1191,25 @@ export default function AtRiskClients({ currentUser }) {
 
   const top10 = eligibleForL2.slice(0, 10);   // → L2 phone calls
   const next15 = eligibleForCf.slice(0, 15);  // → L1 Care Focus
+
+  // Clients on cooldown — in the enriched list but excluded from the active 25
+  const cooldownClients = enriched.filter(c => {
+    const onL2Cool = hasRecentL2(c.name);
+    const onCfCool = hasRecentCf(c.name);
+    if (!onL2Cool && !onCfCool) return false;
+    // Only show if they would otherwise be in the top 25 range
+    return true;
+  }).map(c => {
+    // Find which ticket put them on cooldown and when it expires
+    const l2Tickets_c = l2Tickets.filter(t => t.client_name?.toLowerCase() === c.name.toLowerCase() && isWithin90Days(t.date));
+    const cfRec = getCfRecord(c.name);
+    const l2Ticket = l2Tickets_c.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    const cfTicketDate = cfRec && isWithin90Days(cfRec.week_date) ? cfRec.week_date : null;
+    const ticketDate = l2Ticket?.date || cfTicketDate;
+    const ticketType = l2Ticket ? 'L2' : 'L1';
+    const daysLeft = ticketDate ? Math.ceil((new Date(ticketDate).getTime() + 90 * 24 * 60 * 60 * 1000 - Date.now()) / (24 * 60 * 60 * 1000)) : 0;
+    return { ...c, ticketType, ticketDate, daysLeft };
+  }).filter(c => c.daysLeft > 0).sort((a, b) => a.daysLeft - b.daysLeft);
 
   // Weekly action plan progress
   const l2Done = top10.filter(c => hasL2(c.name)).length;
@@ -1243,18 +1336,20 @@ export default function AtRiskClients({ currentUser }) {
                   hasL2={hasL2(client.name)} cfRecord={null}
                   onL2Click={() => setL2Client(client)}
                   onCFClick={() => {}} onCFComplete={() => {}}
-                  onCheckIn={() => setCheckInClient(client)} />
+                  onCheckIn={() => setNoteClient({ client, track: 'l2' })}
+                  selected={selectedL2.has(client.name)}
+                  onToggleSelect={() => toggleL2(client.name)} />
               ))}
             </div>
           </div>
 
           {/* Next 15 — Care Focus */}
-          <div>
+          <div style={{ marginBottom: 32 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: '#EBF7F1', borderRadius: 14, padding: '14px 16px', border: `1px solid #a7f3d0` }}>
               <div style={{ width: 4, height: 32, background: BAHC_GREEN, borderRadius: 2, flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
                 <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: BAHC_GREEN }}>🌟 Next 15 — L1 Care Focus</h2>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#166534' }}>Schedule extra attention on their next cleaning. Log a Care Focus — creates an L1 ticket in MaidCentral.</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#166534' }}>Schedule extra attention on their next cleaning. Creates an L1 ticket in MaidCentral.</p>
               </div>
               <span style={{ fontSize: 18, fontWeight: 900, color: BAHC_GREEN, whiteSpace: 'nowrap' }}>
                 {cfDone}<span style={{ fontSize: 13, fontWeight: 500, color: '#6ee7b7' }}>/15</span>
@@ -1269,11 +1364,58 @@ export default function AtRiskClients({ currentUser }) {
                     onL2Click={() => {}}
                     onCFClick={() => setCfClient(client)}
                     onCFComplete={() => setCfCompleteClient(client)}
-                    onCheckIn={() => setCheckInClient(client)} />
+                    onCheckIn={() => setNoteClient({ client, track: 'l1' })}
+                    selected={selectedL1.has(client.name)}
+                    onToggleSelect={() => toggleL1(client.name)} />
                 );
               })}
             </div>
           </div>
+
+          {/* 🕐 On Cooldown */}
+          {cooldownClients.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: '#f8fafc', borderRadius: 14, padding: '14px 16px', border: '1px solid #e2e8f0' }}>
+                <div style={{ width: 4, height: 32, background: '#94a3b8', borderRadius: 2, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: '#475569' }}>🕐 On Cooldown ({cooldownClients.length})</h2>
+                  <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>These clients received a ticket recently and are excluded from the active 25 until their 90-day cooldown expires.</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {cooldownClients.map(c => {
+                  const expiresDate = c.ticketDate ? new Date(new Date(c.ticketDate).getTime() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+                  return (
+                    <div key={c.name} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center', opacity: 0.85 }}>
+                      <span style={{ fontSize: 18 }}>🕐</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#475569' }}>{c.name}</span>
+                          <span style={{ fontSize: 11, background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0', borderRadius: 20, padding: '1px 8px', fontWeight: 600 }}>
+                            {c.ticketType} sent
+                          </span>
+                          <span style={{ fontSize: 11, color: '#94a3b8' }}>Score {c.risk_score}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                          Eligible again {expiresDate} · {c.daysLeft} day{c.daysLeft !== 1 ? 's' : ''} remaining
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Batch result toast */}
+          {batchResult && (
+            <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: batchResult.failed === 0 ? '#f0fdf4' : '#fef9c3', border: `1px solid ${batchResult.failed === 0 ? '#86efac' : '#fde047'}`, borderRadius: 12, padding: '12px 20px', fontSize: 14, fontWeight: 600, color: batchResult.failed === 0 ? '#166534' : '#713f12', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', zIndex: 200, whiteSpace: 'nowrap' }}>
+              {batchResult.failed === 0
+                ? `✓ ${batchResult.success} ${batchResult.type} ticket${batchResult.success !== 1 ? 's' : ''} created in MaidCentral`
+                : `⚠ ${batchResult.success} created, ${batchResult.failed} failed`}
+              <button onClick={() => setBatchResult(null)} style={{ marginLeft: 12, background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'inherit', lineHeight: 1 }}>×</button>
+            </div>
+          )}
         </>
       )}
 
@@ -1335,7 +1477,7 @@ export default function AtRiskClients({ currentUser }) {
               {displayed.map(client => (
                 <ClientRow key={client.name} client={client} checkIns={checkIns}
                   hasL2={hasL2(client.name)}
-                  onCheckIn={() => setCheckInClient(client)}
+                  onCheckIn={() => setNoteClient({ client, track: client.risk_tier === 'High' ? 'l2' : 'l1' })}
                   onL2Click={() => setL2Client(client)} />
               ))}
             </div>
@@ -1343,11 +1485,35 @@ export default function AtRiskClients({ currentUser }) {
         </>
       )}
 
+      {/* ── Floating Batch Action Bar ── */}
+      {(selectedL2.size > 0 || selectedL1.size > 0) && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#0f172a', borderRadius: 16, padding: '14px 20px', display: 'flex', gap: 10, alignItems: 'center', boxShadow: '0 8px 32px rgba(0,0,0,0.35)', zIndex: 150, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 'calc(100vw - 32px)' }}>
+          {selectedL2.size > 0 && (
+            <button onClick={submitBatchL2} disabled={batchSubmitting}
+              style={{ padding: '10px 18px', borderRadius: 10, border: 'none', fontSize: 13, fontWeight: 700, cursor: batchSubmitting ? 'default' : 'pointer', background: batchSubmitting ? '#475569' : 'linear-gradient(135deg,#dc2626,#ef4444)', color: '#fff', whiteSpace: 'nowrap' }}>
+              {batchSubmitting ? 'Creating…' : `📞 Create L2 Ticket${selectedL2.size !== 1 ? 's' : ''} (${selectedL2.size})`}
+            </button>
+          )}
+          {selectedL1.size > 0 && (
+            <button onClick={submitBatchL1} disabled={batchSubmitting}
+              style={{ padding: '10px 18px', borderRadius: 10, border: 'none', fontSize: 13, fontWeight: 700, cursor: batchSubmitting ? 'default' : 'pointer', background: batchSubmitting ? '#475569' : `linear-gradient(135deg,${BAHC_GREEN},#38A169)`, color: '#fff', whiteSpace: 'nowrap' }}>
+              {batchSubmitting ? 'Creating…' : `🌟 Create L1 Ticket${selectedL1.size !== 1 ? 's' : ''} (${selectedL1.size})`}
+            </button>
+          )}
+          <button onClick={clearSelections} style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid #475569', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: 'transparent', color: '#94a3b8' }}>
+            Clear
+          </button>
+          <div style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>
+            {[selectedL2.size > 0 && `${selectedL2.size} L2`, selectedL1.size > 0 && `${selectedL1.size} L1`].filter(Boolean).join(' · ')} selected
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
-      {checkInClient && (
-        <CheckInModal client={checkInClient} currentUser={currentUser}
-          onSave={() => { setCheckInClient(null); load(); }}
-          onClose={() => setCheckInClient(null)} />
+      {noteClient && (
+        <NoteModal client={noteClient.client} track={noteClient.track} currentUser={currentUser}
+          onSave={() => { setNoteClient(null); load(); }}
+          onClose={() => setNoteClient(null)} />
       )}
       {l2Client && (
         <L2TicketModal client={l2Client} currentUser={currentUser}
