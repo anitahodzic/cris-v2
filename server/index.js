@@ -1103,6 +1103,18 @@ app.post('/api/account-audit/run', async (req, res) => {
       }) || null;
     }
 
+    // 1b. Pull goal hourly bill rate from Settings sheet (admin-editable)
+    let goalHourlyRate = 70; // fallback
+    try {
+      const sheets = await getSheets();
+      const settingsRows = await readTab(sheets, 'Settings');
+      const settingsObj = settingsRows.reduce((o, s) => { o[s.Setting_Key] = s.Value; return o; }, {});
+      if (settingsObj['goal_hourly_bill_rate']) {
+        const parsed = parseFloat(settingsObj['goal_hourly_bill_rate']);
+        if (!isNaN(parsed)) goalHourlyRate = parsed;
+      }
+    } catch (e) { /* use fallback */ }
+
     // 2. Build a structured context block for the prompt
     const lines = [];
     lines.push(`CLIENT: ${client_name.trim()}`);
@@ -1229,7 +1241,7 @@ app.post('/api/account-audit/run', async (req, res) => {
       reasonFocusLines.push(`REASON: "Rate review"
 → Focus on the revenue math:
    1. Calculate $/labor-hr at allowed vs $/labor-hr at actual — are we hitting our target bill rate?
-   2. The goal hourly bill rate for BA House Cleaning is $${process.env.GOAL_HOURLY_BILL_RATE || '70'}/hr. Flag whether this account is above, at, or below that.
+   2. The goal hourly bill rate for BA House Cleaning is $${goalHourlyRate}/hr. Flag whether this account is above, at, or below that.
    3. How long since the last rate increase? Is the current rate keeping pace with actual time spent?
    4. If actual time is consistently over allowed, what rate adjustment would bring $/actual-hr back to goal?
    5. Give a specific dollar recommendation (e.g., "raise from $X to $Y to hit $70/hr at actual time").`);
@@ -1272,7 +1284,7 @@ app.post('/api/account-audit/run', async (req, res) => {
 You are generating a Customer Account Audit. This is NOT a cancellation evaluation — the client may be active and in good standing. Your job is to assess the health of this account based on the data available and return a structured JSON report that helps the team understand whether action is needed.
 
 BA House Cleaning's core values: WOW, Integrity, Respect, Accountability, Professionalism.
-Goal bill rate: $${process.env.GOAL_HOURLY_BILL_RATE || '70'}/hr.
+Goal bill rate: $${goalHourlyRate}/hr.
 
 IMPORTANT RULES:
 - A CT running long on their FIRST or SECOND visit at a house is NORMAL and expected. Never flag this as a problem. Say it explicitly when it applies.
