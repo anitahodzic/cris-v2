@@ -51,9 +51,14 @@ function getOAuth2Client() {
   return oauth2;
 }
 
-async function getSheets() {
+async function getGoogleAuth() {
   const auth = getAuth(['https://www.googleapis.com/auth/spreadsheets']);
   await auth.authorize();
+  return auth;
+}
+
+async function getSheets() {
+  const auth = await getGoogleAuth();
   return google.sheets({ version: 'v4', auth });
 }
 
