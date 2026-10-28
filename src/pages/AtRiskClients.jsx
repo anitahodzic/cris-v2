@@ -623,6 +623,411 @@ function ClientRow({ client, checkIns, onCheckIn, onL2Click, hasL2 }) {
   );
 }
 
+// ─── Journey Tracker Tab ──────────────────────────────────────────────────────
+function JourneyTracker() {
+  // Default date range: last 30 days
+  const today = new Date().toISOString().split('T')[0];
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const [fromDate, setFromDate] = useState(thirtyDaysAgo);
+  const [toDate, setToDate] = useState(today);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [expandedClient, setExpandedClient] = useState(null);
+  const [outcomeFilter, setOutcomeFilter] = useState('All'); // All | Still At-Risk | Graduated | Cancelled
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${BASE}/api/risk-history?from=${fromDate}&to=${toDate}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setData(json);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [fromDate, toDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const OUTCOME_STYLE = {
+    'Still At-Risk': { color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: '⚠' },
+    'Graduated':     { color: BAHC_GREEN, bg: '#f0fdf4', border: '#86efac', icon: '✓' },
+    'Cancelled':     { color: '#dc2626', bg: '#fef2f2', border: '#fca5a5', icon: '✗' },
+  };
+
+  const filteredClients = (data?.clients || []).filter(c => {
+    if (outcomeFilter === 'All') return true;
+    return c.outcome === outcomeFilter;
+  });
+
+  const saveRate = data?.save_rate;
+  const inf = data?.ticket_influence || {};
+
+  return (
+    <div>
+      {/* Date range picker */}
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '16px 20px', marginBottom: 20, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' }}>Date Range</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+              style={{ padding: '7px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#1e293b' }} />
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>→</span>
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+              style={{ padding: '7px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#1e293b' }} />
+          </div>
+          {/* Quick range buttons */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[
+              { label: '30d', days: 30 },
+              { label: '60d', days: 60 },
+              { label: '90d', days: 90 },
+            ].map(({ label, days }) => (
+              <button key={label} onClick={() => {
+                setToDate(today);
+                setFromDate(new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+              }}
+                style={{ padding: '5px 11px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569' }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button onClick={load}
+          style={{ padding: '8px 18px', background: BAHC_BLUE, color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          Load
+        </button>
+      </div>
+
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: '#64748b' }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>⟳</div>
+          <p style={{ margin: 0, fontSize: 14 }}>Loading journey data…</p>
+        </div>
+      )}
+
+      {error && <div style={{ padding: '20px 24px', color: '#dc2626', background: '#fef2f2', borderRadius: 12, marginBottom: 20 }}>{error}</div>}
+
+      {data && !loading && (
+        <>
+          {/* ── Save Rate Banner ── */}
+          {saveRate !== null && saveRate !== undefined ? (
+            <div style={{
+              background: `linear-gradient(135deg, ${BAHC_GREEN}, #38A169)`,
+              borderRadius: 16, padding: '20px 24px', marginBottom: 20, color: '#fff',
+              display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.85, marginBottom: 4 }}>Client Save Rate · {fromDate} → {toDate}</div>
+                <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>{saveRate}%</div>
+                <div style={{ fontSize: 13, marginTop: 6, opacity: 0.85 }}>
+                  {data.graduated_count} graduated · {data.cancelled_count} cancelled · {data.still_at_risk_count} still at-risk
+                </div>
+              </div>
+              {/* Mini progress bar */}
+              <div style={{ minWidth: 140 }}>
+                <div style={{ height: 10, background: 'rgba(255,255,255,0.3)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ width: `${saveRate}%`, height: '100%', background: '#fff', borderRadius: 99 }} />
+                </div>
+                <div style={{ fontSize: 12, marginTop: 6, opacity: 0.8, textAlign: 'right' }}>
+                  of {data.graduated_count + data.cancelled_count} resolved
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: '16px 20px', marginBottom: 20 }}>
+              <div style={{ fontSize: 14, color: '#64748b' }}>No resolved clients (graduated or cancelled) in this date range yet — save rate will appear once some complete their journey.</div>
+            </div>
+          )}
+
+          {/* ── Summary Tiles ── */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
+            {[
+              { label: 'Unique Clients', value: data.total_unique, color: BAHC_BLUE, bg: '#EBF3FB', icon: '👥' },
+              { label: 'Graduated ✓', value: data.graduated_count, color: BAHC_GREEN, bg: '#f0fdf4', icon: '🎉' },
+              { label: 'Cancelled ✗', value: data.cancelled_count, color: '#dc2626', bg: '#fef2f2', icon: '✗' },
+              { label: 'Still At-Risk', value: data.still_at_risk_count, color: '#d97706', bg: '#fffbeb', icon: '⚠' },
+              { label: 'Chronic (3+ scans)', value: data.chronic_count, color: '#7c3aed', bg: '#f5f3ff', icon: '🔁' },
+            ].map(({ label, value, color, bg, icon }) => (
+              <div key={label} style={{ background: bg, border: `1px solid ${color}30`, borderRadius: 14, padding: '14px 16px' }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+                <div style={{ fontSize: 28, fontWeight: 900, color, lineHeight: 1 }}>{value}</div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, fontWeight: 600 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Ticket Influence ── */}
+          {data.graduated_count > 0 && (
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '18px 20px', marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 14 }}>Ticket Influence on Graduation Rate</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[
+                  { key: 'l2_only', label: 'L2 Phone Call Only (High tier)', color: '#dc2626', bg: '#fef2f2' },
+                  { key: 'both',    label: 'Both L1 + L2 Tickets',           color: BAHC_BLUE,  bg: '#EBF3FB' },
+                  { key: 'l1_only', label: 'L1 Care Focus Only (Low tier)',   color: BAHC_GREEN, bg: '#f0fdf4' },
+                ].map(({ key, label, color, bg }) => {
+                  const g = inf[key] || { total: 0, graduated: 0, rate: null };
+                  if (g.total === 0) return null;
+                  return (
+                    <div key={key}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 800, color }}>
+                          {g.rate !== null ? `${g.rate}%` : '—'}
+                          <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}> ({g.graduated}/{g.total})</span>
+                        </span>
+                      </div>
+                      <div style={{ height: 8, background: '#f1f5f9', borderRadius: 99 }}>
+                        <div style={{ width: `${g.rate ?? 0}%`, height: '100%', background: color, borderRadius: 99 }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Client Journey Cards ── */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>Client Journeys</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['All', 'Still At-Risk', 'Graduated', 'Cancelled'].map(f => (
+                <button key={f} onClick={() => setOutcomeFilter(f)}
+                  style={{ padding: '5px 13px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                    background: outcomeFilter === f ? '#0f172a' : '#f1f5f9',
+                    color: outcomeFilter === f ? '#fff' : '#475569' }}>
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {filteredClients.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
+              <p style={{ fontSize: 14, margin: 0 }}>No clients found for this filter and date range.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {filteredClients.map(client => {
+                const os = OUTCOME_STYLE[client.outcome] || OUTCOME_STYLE['Still At-Risk'];
+                const isExpanded = expandedClient === client.name;
+                const scoreArr = client.scans.map(s => s.risk_score);
+                const minS = Math.min(...scoreArr), maxS = Math.max(...scoreArr);
+                const scoreRange = maxS - minS || 1;
+                const hadL1 = client.ticket_history.some(t => t.type === 'L1');
+                const hadL2 = client.ticket_history.some(t => t.type === 'L2');
+
+                return (
+                  <div key={client.name} style={{ background: '#fff', border: `1px solid ${isExpanded ? os.color + '60' : '#e2e8f0'}`, borderRadius: 14, overflow: 'hidden' }}>
+                    {/* Card header */}
+                    <div style={{ padding: '14px 18px', cursor: 'pointer', display: 'flex', gap: 14, alignItems: 'flex-start' }}
+                      onClick={() => setExpandedClient(isExpanded ? null : client.name)}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{client.name}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: os.color, background: os.bg, border: `1px solid ${os.border}`, borderRadius: 20, padding: '2px 9px' }}>
+                            {os.icon} {client.outcome}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#64748b', background: '#f1f5f9', borderRadius: 20, padding: '2px 9px' }}>
+                            {client.week_count}× on at-risk list
+                          </span>
+                        </div>
+
+                        {/* Ticket pills */}
+                        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                          {hadL2 && <span style={{ fontSize: 11, fontWeight: 700, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 20, padding: '1px 8px' }}>📞 L2 Call</span>}
+                          {hadL1 && <span style={{ fontSize: 11, fontWeight: 700, color: BAHC_GREEN, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 20, padding: '1px 8px' }}>🌟 L1 Care Focus</span>}
+                          {!hadL1 && !hadL2 && <span style={{ fontSize: 11, color: '#94a3b8', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 20, padding: '1px 8px' }}>No tickets</span>}
+                        </div>
+
+                        {/* Mini sparkline */}
+                        {scoreArr.length > 1 && (
+                          <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', height: 28, marginBottom: 4 }}>
+                            {scoreArr.map((score, i) => {
+                              const h = Math.max(4, Math.round(((score - minS) / scoreRange) * 24));
+                              const barColor = score >= 60 ? '#dc2626' : score >= 40 ? '#d97706' : BAHC_GREEN;
+                              return (
+                                <div key={i} title={`${client.scans[i]?.scan_date}: ${score}`}
+                                  style={{ width: 6, height: h, background: barColor, borderRadius: 2, flexShrink: 0, opacity: i === scoreArr.length - 1 ? 1 : 0.6 }} />
+                              );
+                            })}
+                            <span style={{ fontSize: 11, color: '#64748b', marginLeft: 6, alignSelf: 'center' }}>
+                              {client.first_score} → {client.last_score}
+                              {client.score_trend < -2 ? ' ↓' : client.score_trend > 2 ? ' ↑' : ''}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 14, color: '#94a3b8', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>
+                    </div>
+
+                    {/* Expanded: scan timeline */}
+                    {isExpanded && (
+                      <div style={{ borderTop: '1px solid #f1f5f9', padding: '14px 18px' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 10 }}>Scan Timeline</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {client.scans.map((scan, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12 }}>
+                              <div style={{ width: 80, flexShrink: 0, color: '#64748b', fontWeight: 600 }}>{scan.scan_date}</div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 700, color: scan.risk_score >= 60 ? '#dc2626' : scan.risk_score >= 40 ? '#d97706' : BAHC_GREEN }}>
+                                  Score {scan.risk_score}
+                                </span>
+                                <TierBadge tier={scan.risk_tier} />
+                                {scan.l2_ticket === 'Created' && <span style={{ color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '1px 7px', fontWeight: 600 }}>📞 L2 Created</span>}
+                                {scan.l2_ticket === 'Skipped' && <span style={{ color: '#94a3b8', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1px 7px' }}>L2 Skipped (90d)</span>}
+                                {scan.l1_ticket === 'Created' && <span style={{ color: BAHC_GREEN, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '1px 7px', fontWeight: 600 }}>🌟 L1 Created</span>}
+                                {scan.l1_ticket === 'Skipped' && <span style={{ color: '#94a3b8', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1px 7px' }}>L1 Skipped (90d)</span>}
+                                {scan.notes && <span style={{ color: '#64748b' }}>· {scan.notes}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Ticket Log Tab ───────────────────────────────────────────────────────────
+function TicketLog() {
+  const today = new Date().toISOString().split('T')[0];
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const [fromDate, setFromDate] = useState(thirtyDaysAgo);
+  const [toDate, setToDate] = useState(today);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [typeFilter, setTypeFilter] = useState('All');
+  const [search, setSearch] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${BASE}/api/risk-history?from=${fromDate}&to=${toDate}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setData(json);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [fromDate, toDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const tickets = (data?.ticket_log || []).filter(t => {
+    if (typeFilter !== 'All' && t.type !== typeFilter) return false;
+    if (search && !t.client_name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div>
+      {/* Filters */}
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '16px 20px', marginBottom: 20, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' }}>Date Range</label>
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+            style={{ padding: '7px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#1e293b' }} />
+          <span style={{ fontSize: 13, color: '#94a3b8' }}>→</span>
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+            style={{ padding: '7px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#1e293b' }} />
+        </div>
+        <button onClick={load}
+          style={{ padding: '8px 18px', background: BAHC_BLUE, color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          Load
+        </button>
+      </div>
+
+      {/* Type + Search */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ position: 'relative' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients…"
+            style={{ paddingLeft: 12, paddingRight: 10, paddingTop: 7, paddingBottom: 7, fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8, color: '#1e293b', outline: 'none', width: 180 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['All', 'L2', 'L1'].map(f => (
+            <button key={f} onClick={() => setTypeFilter(f)}
+              style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                background: typeFilter === f ? '#0f172a' : '#f1f5f9',
+                color: typeFilter === f ? '#fff' : '#475569' }}>
+              {f === 'L2' ? '📞 L2 Calls' : f === 'L1' ? '🌟 L1 Care Focus' : 'All'}
+            </button>
+          ))}
+        </div>
+        {data && <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>{tickets.length} tickets</span>}
+      </div>
+
+      {loading && <div style={{ textAlign: 'center', padding: '48px 20px', color: '#64748b' }}>Loading ticket log…</div>}
+      {error && <div style={{ padding: '20px', color: '#dc2626', background: '#fef2f2', borderRadius: 12, marginBottom: 20 }}>{error}</div>}
+
+      {data && !loading && (
+        tickets.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>🎫</div>
+            <p style={{ fontSize: 14, margin: 0 }}>No tickets found for this range and filter.</p>
+          </div>
+        ) : (
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden' }}>
+            {/* Table header */}
+            <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 60px 90px 1fr 90px', gap: 0, padding: '10px 18px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div>Date</div>
+              <div>Client</div>
+              <div>Type</div>
+              <div>Score</div>
+              <div>Reason</div>
+              <div>Status</div>
+            </div>
+            {tickets.map((t, i) => {
+              const isL2 = t.type === 'L2';
+              return (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '100px 1fr 60px 90px 1fr 90px', gap: 0, padding: '11px 18px', borderBottom: i < tickets.length - 1 ? '1px solid #f1f5f9' : 'none', alignItems: 'center', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>{t.date}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{t.client_name}</div>
+                  <div>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: isL2 ? '#dc2626' : BAHC_GREEN, background: isL2 ? '#fef2f2' : '#f0fdf4', border: `1px solid ${isL2 ? '#fecaca' : '#86efac'}`, borderRadius: 12, padding: '1px 7px' }}>
+                      {isL2 ? '📞 L2' : '🌟 L1'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>{t.risk_score || '—'}</div>
+                  <div style={{ fontSize: 12, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.risk_reason}>{t.risk_reason || '—'}</div>
+                  <div>
+                    <span style={{ fontSize: 11, fontWeight: 600,
+                      color: t.status === 'Created' || t.status === 'Completed' ? '#16a34a' : t.status === 'Pending' ? '#d97706' : '#64748b',
+                      background: t.status === 'Created' || t.status === 'Completed' ? '#f0fdf4' : t.status === 'Pending' ? '#fffbeb' : '#f8fafc',
+                      border: `1px solid ${t.status === 'Created' || t.status === 'Completed' ? '#86efac' : t.status === 'Pending' ? '#fde68a' : '#e2e8f0'}`,
+                      borderRadius: 12, padding: '1px 8px' }}>
+                      {t.status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AtRiskClients({ currentUser }) {
   const [scanData, setScanData] = useState(null);
@@ -634,6 +1039,9 @@ export default function AtRiskClients({ currentUser }) {
   const [view, setView] = useState('weekly'); // 'weekly' | 'all'
   const [filter, setFilter] = useState('High');
   const [search, setSearch] = useState('');
+
+  // Top-level tab
+  const [mainTab, setMainTab] = useState('thisweek'); // 'thisweek' | 'journey' | 'ticketlog'
 
   // Modals
   const [checkInClient, setCheckInClient] = useState(null);
@@ -747,10 +1155,39 @@ export default function AtRiskClients({ currentUser }) {
             {scanData?.scan_date && <span style={{ color: '#94a3b8' }}> · Scanned {new Date(scanData.scan_date).toLocaleString()}</span>}
           </p>
         </div>
-        <button onClick={load} style={{ padding: '9px 16px', border: `1.5px solid ${BAHC_BLUE}`, borderRadius: 10, fontSize: 13, fontWeight: 700, background: '#fff', color: BAHC_BLUE, cursor: 'pointer' }}>
-          ↻ Refresh
-        </button>
+        {mainTab === 'thisweek' && (
+          <button onClick={load} style={{ padding: '9px 16px', border: `1.5px solid ${BAHC_BLUE}`, borderRadius: 10, fontSize: 13, fontWeight: 700, background: '#fff', color: BAHC_BLUE, cursor: 'pointer' }}>
+            ↻ Refresh
+          </button>
+        )}
       </div>
+
+      {/* ── 3-Tab Nav ── */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 28, borderBottom: '2px solid #f1f5f9' }}>
+        {[
+          { id: 'thisweek',  label: '📋 This Week' },
+          { id: 'journey',   label: '📈 Journey Tracker' },
+          { id: 'ticketlog', label: '🎫 Ticket Log' },
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setMainTab(tab.id)}
+            style={{ padding: '10px 22px', fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', background: 'transparent',
+              color: mainTab === tab.id ? BAHC_BLUE : '#64748b',
+              borderBottom: mainTab === tab.id ? `3px solid ${BAHC_BLUE}` : '3px solid transparent',
+              marginBottom: -2, transition: 'all 0.15s' }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Journey Tracker tab ── */}
+      {mainTab === 'journey' && <JourneyTracker />}
+
+      {/* ── Ticket Log tab ── */}
+      {mainTab === 'ticketlog' && <TicketLog />}
+
+      {/* ── This Week tab (existing content) ── */}
+      {mainTab === 'thisweek' && (
+      <>
 
       {/* View toggle */}
       <div style={{ display: 'flex', gap: 1, marginBottom: 24, background: '#f1f5f9', padding: 4, borderRadius: 12, width: 'fit-content' }}>
@@ -930,6 +1367,8 @@ export default function AtRiskClients({ currentUser }) {
           onSave={() => { setCfCompleteClient(null); load(); }}
           onClose={() => setCfCompleteClient(null)} />
       )}
+      </>
+      )} {/* end thisweek tab */}
     </div>
   );
 }

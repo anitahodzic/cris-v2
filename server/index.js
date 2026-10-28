@@ -1616,9 +1616,316 @@ app.get('/api/risk-scan', async (req, res) => {
     riskScanCache.ts   = now;
     riskScanCache.data = result;
 
+    // ── Log this scan to Risk_History (fire-and-forget, non-blocking) ──────
+    // Top 25 clients get a row each: Scan_Date, Client_Name, Risk_Score,
+    // Risk_Tier, L1_Ticket, L1_Skipped_Reason, L2_Ticket, L2_Skipped_Reason, Outcome, Notes
+    setImmediate(async () => {
+      try {
+        const scanDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const sheetsLog = await getSheets();
+
+        // Read L2_Tickets and Care_Focus (90-day cooldown check)
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - 90);
+        const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+        let l2Rows = [], cfRows = [];
+        try {
+          const [l2Res, cfRes] = await Promise.allSettled([
+            readTab(sheetsLog, 'L2_Tickets').catch(() => []),
+            readTab(sheetsLog, 'Care_Focus').catch(() => []),
+          ]);
+          l2Rows = l2Res.status === 'fulfilled' ? (l2Res.value || []) : [];
+          cfRows = cfRes.status === 'fulfilled' ? (cfRes.value || []) : [];
+        } catch (_) {}
+
+        // Build 90-day lookup sets by client name
+        const recentL2 = new Set(
+          l2Rows
+            .filter(r => {
+              const d = r.Date ? new Date(r.Date) : null;
+              return d && d >= cutoffDate;
+            })
+            .map(r => (r.Client_Name || '').toLowerCase().trim())
+        );
+        const recentCF = new Set(
+          cfRows
+            .filter(r => {
+              const d = r.Week_Date ? new Date(r.Week_Date) : null;
+              return d && d >= cutoffDate;
+            })
+            .map(r => (r.Client_Name || '').toLowerCase().trim())
+        );
+
+        const top25 = ranked.slice(0, 25);
+        const RISK_HISTORY_HEADERS = [
+          'Scan_Date','Client_Name','Risk_Score','Risk_Tier',
+          'L1_Ticket','L1_Skipped_Reason',
+          'L2_Ticket','L2_Skipped_Reason',
+          'Outcome','Notes',
+        ];
+
+        const historyRows = top25.map(c => {
+          const nameLow = (c.name || '').toLowerCase().trim();
+          const isHigh = c.risk_tier === 'High';
+
+          // L2 (phone call) — only for High tier
+          let l2Ticket = '', l2Skip = '';
+          if (isHigh) {
+            if (recentL2.has(nameLow)) {
+              l2Ticket = 'Skipped';
+              l2Skip = '90-day cooldown';
+            } else {
+              l2Ticket = 'Created';
+            }
+          }
+
+          // L1 (Care Focus) — only for Low tier
+          let l1Ticket = '', l1Skip = '';
+          if (!isHigh) {
+            if (recentCF.has(nameLow)) {
+              l1Ticket = 'Skipped';
+              l1Skip = '90-day cooldown';
+            } else {
+              l1Ticket = 'Created';
+            }
+          }
+
+          return {
+            Scan_Date: scanDate,
+            Client_Name: c.name,
+            Risk_Score: String(Math.round(c.risk_score * 10) / 10),
+            Risk_Tier: c.risk_tier,
+            L1_Ticket: l1Ticket,
+            L1_Skipped_Reason: l1Skip,
+            L2_Ticket: l2Ticket,
+            L2_Skipped_Reason: l2Skip,
+            Outcome: 'Still At-Risk',
+            Notes: c.top_signal || '',
+          };
+        });
+
+        // Batch-append all rows at once
+        const values = historyRows.map(r => RISK_HISTORY_HEADERS.map(h => r[h] ?? ''));
+        await sheetsLog.spreadsheets.values.append({
+          spreadsheetId: SHEET_ID,
+          range: 'Risk_History',
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values },
+        });
+        console.log(`risk-scan: logged ${values.length} rows to Risk_History for ${scanDate}`);
+      } catch (logErr) {
+        console.warn('risk-scan: Risk_History logging failed (non-fatal):', logErr.message);
+      }
+    });
+
     res.json(result);
   } catch (err) {
     console.error('risk-scan error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Risk History — journey tracker data ─────────────────────────────────
+// GET /api/risk-history?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Reads Risk_History sheet, returns per-client journeys, save rate, ticket influence
+app.get('/api/risk-history', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(from) : null;
+    const toDate   = to   ? new Date(to + 'T23:59:59') : null;
+
+    const sheets = await getSheets();
+
+    // Read Risk_History + L2_Tickets + Care_Focus in parallel
+    const [historyRows, l2Rows, cfRows] = await Promise.all([
+      readTab(sheets, 'Risk_History').catch(() => []),
+      readTab(sheets, 'L2_Tickets').catch(() => []),
+      readTab(sheets, 'Care_Focus').catch(() => []),
+    ]);
+
+    // Filter history to date range
+    const filtered = historyRows.filter(r => {
+      if (!r.Scan_Date) return false;
+      const d = new Date(r.Scan_Date);
+      if (fromDate && d < fromDate) return false;
+      if (toDate   && d > toDate)   return false;
+      return true;
+    });
+
+    // Collect unique scan dates (weeks)
+    const scanDates = [...new Set(filtered.map(r => r.Scan_Date))].sort();
+
+    // Build per-client journey map
+    const clientMap = {};
+    for (const row of filtered) {
+      const name = (row.Client_Name || '').trim();
+      if (!name) continue;
+      if (!clientMap[name]) {
+        clientMap[name] = {
+          name,
+          scans: [],         // weekly appearances
+          outcome: 'Still At-Risk',  // will update below
+        };
+      }
+      clientMap[name].scans.push({
+        scan_date:         row.Scan_Date,
+        risk_score:        parseFloat(row.Risk_Score) || 0,
+        risk_tier:         row.Risk_Tier || '',
+        l1_ticket:         row.L1_Ticket || '',
+        l1_skipped_reason: row.L1_Skipped_Reason || '',
+        l2_ticket:         row.L2_Ticket || '',
+        l2_skipped_reason: row.L2_Skipped_Reason || '',
+        outcome:           row.Outcome || 'Still At-Risk',
+        notes:             row.Notes || '',
+      });
+      // Use the most recent Outcome on the client record
+      if (row.Outcome && row.Outcome !== 'Still At-Risk') {
+        clientMap[name].outcome = row.Outcome;
+      }
+    }
+
+    // Enrich ticket history from L2_Tickets and Care_Focus sheets
+    // Build lookup: client name → sorted list of ticket dates
+    const l2ByClient = {};
+    for (const r of l2Rows) {
+      const name = (r.Client_Name || '').trim().toLowerCase();
+      if (!name) continue;
+      if (!l2ByClient[name]) l2ByClient[name] = [];
+      l2ByClient[name].push({ date: r.Date || '', tier: 'High', type: 'L2', mc_ticket_id: r.MC_Ticket_ID || '' });
+    }
+    const cfByClient = {};
+    for (const r of cfRows) {
+      const name = (r.Client_Name || '').trim().toLowerCase();
+      if (!name) continue;
+      if (!cfByClient[name]) cfByClient[name] = [];
+      cfByClient[name].push({ date: r.Week_Date || '', tier: 'Low', type: 'L1', completed: r.Completed || 'No' });
+    }
+
+    // Build final client list
+    const clients = Object.values(clientMap).map(c => {
+      const nameLow = c.name.toLowerCase();
+      const scans = c.scans.sort((a, b) => a.scan_date.localeCompare(b.scan_date));
+      const firstScan = scans[0]?.scan_date || '';
+      const lastScan  = scans[scans.length - 1]?.scan_date || '';
+      const lastScore = scans[scans.length - 1]?.risk_score || 0;
+      const firstScore = scans[0]?.risk_score || 0;
+      const weekCount = scans.length;
+
+      // Ticket history from actual ticket sheets (within date range)
+      const ticketHistory = [
+        ...(l2ByClient[nameLow] || []).filter(t => {
+          const d = new Date(t.date);
+          return (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
+        }),
+        ...(cfByClient[nameLow] || []).filter(t => {
+          const d = new Date(t.date);
+          return (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
+        }),
+      ].sort((a, b) => a.date.localeCompare(b.date));
+
+      // Determine ticket types received during journey (for influence calc)
+      const hadL1 = ticketHistory.some(t => t.type === 'L1');
+      const hadL2 = ticketHistory.some(t => t.type === 'L2');
+      let ticketGroup = 'none';
+      if (hadL1 && hadL2) ticketGroup = 'both';
+      else if (hadL2) ticketGroup = 'l2_only';
+      else if (hadL1) ticketGroup = 'l1_only';
+
+      return {
+        name: c.name,
+        outcome: c.outcome,
+        week_count: weekCount,
+        first_scan: firstScan,
+        last_scan:  lastScan,
+        first_score: firstScore,
+        last_score:  lastScore,
+        score_trend: lastScore - firstScore, // negative = improving
+        scans,
+        ticket_history: ticketHistory,
+        ticket_group: ticketGroup,
+      };
+    });
+
+    // ── Summary stats ──────────────────────────────────────────────────
+    const graduated = clients.filter(c => c.outcome === 'Graduated');
+    const cancelled  = clients.filter(c => c.outcome === 'Cancelled');
+    const stillAtRisk = clients.filter(c => c.outcome === 'Still At-Risk');
+    const resolved = graduated.length + cancelled.length;
+    const saveRate = resolved > 0 ? Math.round((graduated.length / resolved) * 100) : null;
+
+    // Chronic = appeared on 3+ scans
+    const chronic = clients.filter(c => c.week_count >= 3);
+
+    // ── Ticket influence breakdown ──────────────────────────────────────
+    // Among resolved clients only (graduated + cancelled)
+    const resolvedClients = clients.filter(c => c.outcome === 'Graduated' || c.outcome === 'Cancelled');
+    const influence = {
+      l2_only: { total: 0, graduated: 0, rate: null },
+      both:    { total: 0, graduated: 0, rate: null },
+      l1_only: { total: 0, graduated: 0, rate: null },
+      none:    { total: 0, graduated: 0, rate: null },
+    };
+    for (const c of resolvedClients) {
+      const g = influence[c.ticket_group] || influence.none;
+      g.total++;
+      if (c.outcome === 'Graduated') g.graduated++;
+    }
+    for (const key of Object.keys(influence)) {
+      const g = influence[key];
+      g.rate = g.total > 0 ? Math.round((g.graduated / g.total) * 100) : null;
+    }
+
+    // ── Ticket log (full audit) ────────────────────────────────────────
+    const ticketLog = [
+      ...l2Rows
+        .filter(r => {
+          const d = new Date(r.Date);
+          return (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
+        })
+        .map(r => ({
+          date:        r.Date || '',
+          client_name: r.Client_Name || '',
+          type:        'L2',
+          tier:        'High',
+          risk_score:  r.Risk_Score || '',
+          risk_reason: r.Risk_Reason || '',
+          mc_ticket_id: r.MC_Ticket_ID || '',
+          status:      r.MC_Ticket_ID ? 'Created' : 'Logged',
+          created_by:  r.Created_By || '',
+        })),
+      ...cfRows
+        .filter(r => {
+          const d = new Date(r.Week_Date);
+          return (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
+        })
+        .map(r => ({
+          date:        r.Week_Date || '',
+          client_name: r.Client_Name || '',
+          type:        'L1',
+          tier:        'Low',
+          risk_score:  r.Risk_Score || '',
+          risk_reason: r.Risk_Reason || '',
+          mc_ticket_id: '',
+          status:      r.Completed === 'Yes' ? 'Completed' : 'Pending',
+          created_by:  r.Created_By || '',
+        })),
+    ].sort((a, b) => b.date.localeCompare(a.date));
+
+    res.json({
+      scan_dates:   scanDates,
+      total_unique: clients.length,
+      chronic_count: chronic.length,
+      graduated_count: graduated.length,
+      cancelled_count: cancelled.length,
+      still_at_risk_count: stillAtRisk.length,
+      save_rate: saveRate,
+      ticket_influence: influence,
+      clients: clients.sort((a, b) => b.week_count - a.week_count),
+      ticket_log: ticketLog,
+    });
+  } catch (err) {
+    console.error('risk-history error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
